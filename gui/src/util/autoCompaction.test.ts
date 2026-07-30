@@ -103,9 +103,41 @@ describe("getAutoCompactionTarget", () => {
     expect(
       getAutoCompactionTarget(
         [item("user", "first"), item("assistant", "answer")],
-        0.79,
+        0.54,
       ),
     ).toBeUndefined();
+  });
+
+  it("does not compact early on large-context models", () => {
+    expect(
+      getAutoCompactionTarget(
+        [
+          item("user", "first"),
+          item("assistant", "answer"),
+          item("user", "current"),
+          item("assistant", ""),
+        ],
+        0.25,
+        false,
+        51_000,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("compacts when absolute prompt tokens are high on large-context models", () => {
+    expect(
+      getAutoCompactionTarget(
+        [
+          item("user", "first"),
+          item("assistant", "answer"),
+          item("user", "current"),
+          item("assistant", ""),
+        ],
+        0.1,
+        false,
+        96_000,
+      ),
+    ).toBe(1);
   });
 
   it("uses only completed non-tool responses as manual summary boundaries", () => {

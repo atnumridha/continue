@@ -28,6 +28,7 @@ import {
   type IIdeMessenger,
 } from "../../context/IdeMessenger";
 import { useAppDispatch, useAppSelector } from "../../redux/hooks";
+import { selectSelectedChatModel } from "../../redux/slices/configSlice";
 import { selectToolCallsByStatus } from "../../redux/selectors/selectToolCalls";
 import { cancelToolCall } from "../../redux/slices/sessionSlice";
 import type { AgentAccessMode } from "../../redux/slices/uiSlice";
@@ -175,6 +176,8 @@ function InputToolbar(props: InputToolbarProps) {
     visibility: "hidden",
   });
   const isInEdit = useAppSelector((store) => store.session.isInEdit);
+  const isConfigLoading = useAppSelector((store) => store.config.loading);
+  const selectedChatModel = useAppSelector(selectSelectedChatModel);
   const isStreaming = useAppSelector((store) => store.session.isStreaming);
   const codeToEdit = useAppSelector((store) => store.editModeState.codeToEdit);
   const runningToolCalls = useAppSelector((state) =>
@@ -184,7 +187,9 @@ function InputToolbar(props: InputToolbarProps) {
     props.isMainInput && (isStreaming || runningToolCalls.length > 0),
   );
   const isEnterDisabled =
-    props.disabled || (isInEdit && codeToEdit.length === 0);
+    props.disabled ||
+    (isInEdit && codeToEdit.length === 0) ||
+    (props.isMainInput && (isConfigLoading || !selectedChatModel));
 
   const smallFont = useFontSize(-2);
   const tinyFont = useFontSize(-3);
@@ -810,7 +815,11 @@ function InputToolbar(props: InputToolbarProps) {
             <ToolTip
               place="top"
               content={
-                props.isMainInput ? `Send (${sendShortcut})` : "Send (⏎)"
+                props.isMainInput && (isConfigLoading || !selectedChatModel)
+                  ? "Loading selected model…"
+                  : props.isMainInput
+                    ? `Send (${sendShortcut})`
+                    : "Send (⏎)"
               }
             >
               <Button

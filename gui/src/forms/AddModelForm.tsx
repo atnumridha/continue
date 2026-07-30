@@ -56,7 +56,10 @@ export function AddModelForm({ onDone }: AddModelFormProps) {
   const handleFetchModels = useCallback(async () => {
     const apiKey = formMethods.watch("apiKey");
     const apiBase = formMethods.watch("apiBase");
-    if (!apiKey) return;
+    const canFetchWithoutApiKey = ["mlx", "ollama"].includes(
+      selectedProvider.provider,
+    );
+    if (!apiKey && !canFetchWithoutApiKey) return;
 
     const providerAtFetchTime = selectedProvider.provider;
     setIsFetchingModels(true);
@@ -84,6 +87,7 @@ export function AddModelForm({ onDone }: AddModelFormProps) {
     providers["gemini"]?.title || "",
     providers["azure"]?.title || "",
     providers["ollama"]?.title || "",
+    providers["mlx"]?.title || "",
     providers["openrouter"]?.title || "",
   ];
 
@@ -238,12 +242,17 @@ export function AddModelForm({ onDone }: AddModelFormProps) {
                 <label className="block text-sm font-medium">Model</label>
                 <button
                   type="button"
-                  title="Use entered API key to fetch available models"
+                  title={
+                    selectedProvider.provider === "mlx"
+                      ? "Fetch available models from the MLX server"
+                      : "Use entered API key to fetch available models"
+                  }
                   className={`cursor-pointer border-none bg-transparent p-0 ${
-                    apiKeyValue &&
-                    apiKeyValue.length > 0 &&
-                    selectedProvider.provider !== "ollama" &&
-                    selectedProvider.provider !== "openrouter"
+                    (apiKeyValue &&
+                      apiKeyValue.length > 0 &&
+                      selectedProvider.provider !== "ollama" &&
+                      selectedProvider.provider !== "openrouter") ||
+                    selectedProvider.provider === "mlx"
                       ? `text-description-muted hover:text-foreground`
                       : "invisible"
                   }`}

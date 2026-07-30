@@ -482,10 +482,9 @@ class VsCodeIde implements IDE {
         if (code === 0) {
           resolve(output);
         } else if (code === 1) {
-          // No matches
-          resolve(
-            "No matches found. Build, secrets, etc. dirs and files are not included.",
-          );
+          // No matches. Tool implementations already render user-facing
+          // no-result messages, so keep the raw command output empty.
+          resolve("");
         } else {
           reject(new Error(`Process exited with code ${code}`));
         }

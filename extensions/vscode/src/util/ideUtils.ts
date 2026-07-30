@@ -67,6 +67,19 @@ export class VsCodeIdeUtils {
   private _workspaceDirectories: vscode.Uri[] | undefined = undefined;
   private _selectedWorkspaceDirectory: vscode.Uri | undefined = undefined;
 
+  private sameWorkspaceDirectories(
+    left: vscode.Uri[] | undefined,
+    right: vscode.Uri[],
+  ): boolean {
+    if (!left || left.length !== right.length) {
+      return false;
+    }
+
+    return left.every(
+      (dir, index) => dir.toString() === right[index].toString(),
+    );
+  }
+
   private workspaceDirectoriesWithSelected(dirs: vscode.Uri[]): vscode.Uri[] {
     if (!this._selectedWorkspaceDirectory) {
       return dirs;
@@ -83,8 +96,11 @@ export class VsCodeIdeUtils {
       vscode.workspace.workspaceFolders?.map((folder) => folder.uri) || [];
     if (
       this._workspaceDirectories === undefined ||
-      (this._workspaceDirectories.length === 0 &&
-        liveWorkspaceDirectories.length > 0)
+      (liveWorkspaceDirectories.length > 0 &&
+        !this.sameWorkspaceDirectories(
+          this._workspaceDirectories,
+          liveWorkspaceDirectories,
+        ))
     ) {
       this._workspaceDirectories = liveWorkspaceDirectories;
     }

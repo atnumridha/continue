@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   limitPromptLogsForHistory,
   limitToolContextItemsForHistory,
+  limitToolContextItemsForPrompt,
 } from "./historyPayloadLimits";
 
 describe("history payload limits", () => {
@@ -36,5 +37,26 @@ describe("history payload limits", () => {
     expect(bounded.content.length).toBeLessThan(contextItems[0].content.length);
     expect(bounded.content).toContain("tool output truncated");
     expect(bounded.description).toContain("truncated for session history");
+  });
+
+  it("uses a smaller prompt-only cap for replayed tool output", () => {
+    const contextItems: ContextItem[] = [
+      {
+        name: "Search",
+        description: "Search output",
+        content: "x".repeat(40_000),
+      },
+    ];
+
+    const [historyBounded] = limitToolContextItemsForHistory(contextItems);
+    const [promptBounded] = limitToolContextItemsForPrompt(contextItems);
+
+    expect(promptBounded.content.length).toBeLessThan(
+      historyBounded.content.length,
+    );
+    expect(promptBounded.content).toContain(
+      "tool output truncated for model prompt",
+    );
+    expect(promptBounded.description).toContain("truncated for model prompt");
   });
 });

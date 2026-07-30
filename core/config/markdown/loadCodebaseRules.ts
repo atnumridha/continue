@@ -1,90 +1,51 @@
 import { ConfigValidationError, markdownToRule } from "@qivryn/config-yaml";
-import os from "os";
-import path from "path";
 import { IDE, RuleWithSource } from "../..";
-import { walkDir, walkDirs } from "../../indexing/walkDir";
+import { walkDirs } from "../../indexing/walkDir";
 import { RULES_MARKDOWN_FILENAME } from "../../llm/rules/constants";
-import { localPathToUri } from "../../util/pathToUri";
 import { findUriInDirs, getUriPathBasename } from "../../util/uri";
 import { getDisabledCodexImportSourcePaths } from "../codex/codexImportManager";
 
-const PORTABLE_AGENT_RULE_FILES = new Set([
-  ".cursorrules",
-  "agents.md",
-  "agent.md",
-  "claude.md",
-  "codex.md",
-  "copilot-instructions.md",
-  "global-copilot-instructions.md",
-  "global-agents-instructions.md",
-]);
-
-const PORTABLE_AGENT_RULE_DIR_SEGMENTS = [
-  "/.cursor/rules/",
-  "/.claude/rules/",
-  "/.codex/rules/",
-  "/.agents/rules/",
-  "/.github/instructions/",
-];
-
-function isPortableAgentRuleDirFile(normalizedUri: string): boolean {
-  const filename = getUriPathBasename(normalizedUri).toLowerCase();
-  return (
-    (filename.endsWith(".md") || filename.endsWith(".mdc")) &&
-    PORTABLE_AGENT_RULE_DIR_SEGMENTS.some((segment) =>
-      normalizedUri.includes(segment),
-    )
-  );
-}
-
-/** Cursor, Claude, Codex, Copilot and Qivryn rule files share one loader. */
-export function isCrossAgentRuleFile(fileUri: string): boolean {
+export function isCodebaseRulesFile(fileUri: string): boolean {
   const normalized = fileUri.replaceAll("\\", "/").toLowerCase();
   const filename = getUriPathBasename(normalized).toLowerCase();
-  if (filename === RULES_MARKDOWN_FILENAME) return true;
-  if (PORTABLE_AGENT_RULE_FILES.has(filename)) return true;
-  return isPortableAgentRuleDirFile(normalized);
+  return filename === RULES_MARKDOWN_FILENAME;
 }
 
-function portableRuleIsWorkspaceWide(fileUri: string): boolean {
-  const normalized = fileUri.replaceAll("\\", "/").toLowerCase();
-  const filename = getUriPathBasename(normalized).toLowerCase();
+export function isRootOrDotQivrynRuleFile(
+  fileUri: string,
+  workspaceDirs: string[],
+): boolean {
+  if (!isCodebaseRulesFile(fileUri)) {
+    return false;
+  }
+
+  const { relativePathOrBasename, foundInDir } = findUriInDirs(
+    fileUri,
+    workspaceDirs,
+  );
+  if (!foundInDir) {
+    return false;
+  }
+
+  const normalizedRelativePath = relativePathOrBasename
+    .replaceAll("\\", "/")
+    .toLowerCase();
   return (
-    filename === ".cursorrules" ||
-    filename === "copilot-instructions.md" ||
-    isPortableAgentRuleDirFile(normalized)
+    normalizedRelativePath === RULES_MARKDOWN_FILENAME ||
+    normalizedRelativePath.startsWith(".qivryn/")
   );
 }
 
-export function getGlobalCrossAgentRulePaths(homeDir = os.homedir()) {
-  return [
-    path.join(homeDir, ".cursorrules"),
-    path.join(homeDir, ".cursor", "rules"),
-    path.join(homeDir, ".claude", "rules"),
-    path.join(homeDir, ".codex", "rules"),
-    path.join(homeDir, ".codex", "AGENTS.md"),
-    path.join(homeDir, ".agents", "rules"),
-    path.join(homeDir, ".config", "github-copilot", "intellij"),
-  ];
-}
-
-async function getGlobalCrossAgentRuleFiles(ide: IDE): Promise<string[]> {
-  const files = await Promise.all(
-    getGlobalCrossAgentRulePaths().map(async (rulePath) => {
-      const uri = localPathToUri(rulePath);
-      if (!(await ide.fileExists(uri))) return [];
-      if (
-        getUriPathBasename(uri).toLowerCase() === ".cursorrules" ||
-        getUriPathBasename(uri).toLowerCase() === "agents.md"
-      ) {
-        return [uri];
-      }
-      return (
-        await walkDir(uri, ide, { source: "get global agent rules" })
-      ).filter(isCrossAgentRuleFile);
-    }),
-  );
-  return files.flat();
+/**
+ * Qivryn keeps ephemeral agent worktrees below its own data directory. When
+ * that directory is opened as a VS Code workspace, those worktrees are not
+ * user project source and must not contribute their copied agent rules.
+ */
+export function isQivrynInternalAgentWorktreePath(fileUri: string): boolean {
+  return fileUri
+    .replaceAll("\\", "/")
+    .toLowerCase()
+    .includes("/.qivryn/agents/worktrees/");
 }
 
 export class CodebaseRulesCache {
@@ -105,8 +66,16 @@ export class CodebaseRulesCache {
     this.errors = errors;
   }
   async update(ide: IDE, uri: string) {
-    const content = await ide.readFile(uri);
     const workspaceDirs = await ide.getWorkspaceDirs();
+    if (
+      !isRootOrDotQivrynRuleFile(uri, workspaceDirs) ||
+      isQivrynInternalAgentWorktreePath(uri)
+    ) {
+      this.remove(uri);
+      return;
+    }
+
+    const content = await ide.readFile(uri);
     const { relativePathOrBasename, foundInDir } = findUriInDirs(
       uri,
       workspaceDirs,
@@ -142,7 +111,7 @@ export class CodebaseRulesCache {
 }
 
 /**
- * Loads rules from rules.md files colocated in the codebase
+ * Loads root-level rules.md files and rules.md files under .qivryn.
  */
 export async function loadCodebaseRules(ide: IDE): Promise<{
   rules: RuleWithSource[];
@@ -152,15 +121,18 @@ export async function loadCodebaseRules(ide: IDE): Promise<{
   const rules: RuleWithSource[] = [];
 
   try {
-    // Get all files from the workspace
-    const allFiles = [
-      ...(await walkDirs(ide)),
-      ...(await getGlobalCrossAgentRuleFiles(ide)),
-    ];
+    // Root-level agent files are loaded by loadMarkdownRules. This walk must
+    // not import nested AGENTS.md/CODEX.md files or recursively widen prompt
+    // instructions from arbitrary project subdirectories.
+    const allFiles = await walkDirs(ide);
+    const workspaceDirs = await ide.getWorkspaceDirs();
 
     const disabled = await getDisabledCodexImportSourcePaths("rule");
     const rulesMdFiles = allFiles.filter(
-      (file) => isCrossAgentRuleFile(file) && !disabled.has(file),
+      (file) =>
+        isRootOrDotQivrynRuleFile(file, workspaceDirs) &&
+        !isQivrynInternalAgentWorktreePath(file) &&
+        !disabled.has(file),
     );
 
     // Process each rules.md file
@@ -169,13 +141,11 @@ export async function loadCodebaseRules(ide: IDE): Promise<{
         const content = await ide.readFile(filePath);
         const { relativePathOrBasename, foundInDir, uri } = findUriInDirs(
           filePath,
-          await ide.getWorkspaceDirs(),
+          workspaceDirs,
         );
         if (foundInDir) {
           const lastSlashIndex = relativePathOrBasename.lastIndexOf("/");
-          const parentDir = portableRuleIsWorkspaceWide(filePath)
-            ? undefined
-            : relativePathOrBasename.substring(0, lastSlashIndex);
+          const parentDir = relativePathOrBasename.substring(0, lastSlashIndex);
           const rule = markdownToRule(
             content,
             {
@@ -185,16 +155,8 @@ export async function loadCodebaseRules(ide: IDE): Promise<{
             parentDir,
           );
 
-          const filename = getUriPathBasename(filePath).toLowerCase();
-          const portableAlwaysApply =
-            PORTABLE_AGENT_RULE_FILES.has(filename) ||
-            filename === ".cursorrules";
-          const alwaysApply =
-            rule.alwaysApply ?? (portableAlwaysApply ? true : undefined);
-
           rules.push({
             ...rule,
-            ...(alwaysApply === undefined ? {} : { alwaysApply }),
             source: "colocated-markdown",
             sourceFile: filePath,
           });

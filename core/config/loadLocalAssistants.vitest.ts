@@ -307,6 +307,26 @@ describe("AGENTS getAllDotQivrynDefinitionFiles with fileExtType option", () => 
     );
   });
 
+  it("does not scan Qivryn internal agent worktrees", async () => {
+    addToTestDir([
+      ".qivryn/agents/worktrees/run-1/",
+      [
+        ".qivryn/agents/worktrees/run-1/copied-agent.yaml",
+        "copied agent config",
+      ],
+    ]);
+
+    const result = await getAllDotQivrynDefinitionFiles(
+      testIde,
+      { includeGlobal: false, includeWorkspace: true, fileExtType: "yaml" },
+      "agents",
+    );
+
+    expect(result.map((file) => file.path)).not.toContain(
+      expect.stringContaining("/worktrees/"),
+    );
+  });
+
   it("should return only Markdown files when fileExtType is 'markdown'", async () => {
     const options: LoadAssistantFilesOptions = {
       includeGlobal: false,

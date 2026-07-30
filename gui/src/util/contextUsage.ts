@@ -3,6 +3,14 @@ export interface ContextUsageSnapshot {
   contextLength: number;
   availableTokens?: number;
   model?: string;
+  tokenBreakdown?: {
+    system: number;
+    history: number;
+    latest: number;
+    tools: number;
+    safetyBuffer: number;
+    reservedOutput: number;
+  };
 }
 
 export function reconcileContextUsageSnapshot(

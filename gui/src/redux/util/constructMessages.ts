@@ -26,7 +26,7 @@ import {
   renderContextItemsWithStatus,
 } from "core/util/messageContent";
 import { toolCallStateToContextItems } from "../../pages/gui/ToolCallDiv/utils";
-import { limitToolContextItemsForHistory } from "../../util/historyPayloadLimits";
+import { limitToolContextItemsForPrompt } from "../../util/historyPayloadLimits";
 
 // Helper function to render context items and append status information
 // Helper function to render context items and append status information
@@ -156,7 +156,7 @@ export function constructMessages(
         for (const toolCallState of item.toolCallStates) {
           const { output, status, toolCall } = toolCallState;
           const boundedOutput = output
-            ? limitToolContextItemsForHistory(output)
+            ? limitToolContextItemsForPrompt(output)
             : undefined;
           let content: string = NO_TOOL_CALL_OUTPUT_MESSAGE;
 

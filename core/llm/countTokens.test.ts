@@ -195,6 +195,13 @@ describe("compileChatMessages context usage", () => {
     expect(compiled.inputTokens).toBeGreaterThan(0);
     expect(compiled.contextLength).toBe(200_000);
     expect(compiled.availableTokens).toBeLessThan(200_000);
+    expect(compiled.tokenBreakdown).toBeDefined();
+    expect(
+      (compiled.tokenBreakdown?.system ?? 0) +
+        (compiled.tokenBreakdown?.history ?? 0) +
+        (compiled.tokenBreakdown?.latest ?? 0) +
+        (compiled.tokenBreakdown?.tools ?? 0),
+    ).toBe(compiled.inputTokens);
   });
 
   it("repairs a compacted system-only request with a user anchor", () => {

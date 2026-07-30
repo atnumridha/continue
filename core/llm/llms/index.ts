@@ -39,6 +39,7 @@ import LMStudio from "./LMStudio";
 import Mistral from "./Mistral";
 import Mimo from "./Mimo";
 import MiniMax from "./MiniMax";
+import Mlx from "./Mlx";
 import MockLLM from "./Mock";
 import Moonshot from "./Moonshot";
 import Msty from "./Msty";
@@ -98,6 +99,7 @@ export const LLMClasses = [
   Mistral,
   Mimo,
   MiniMax,
+  Mlx,
   Bedrock,
   BedrockImport,
   SageMaker,

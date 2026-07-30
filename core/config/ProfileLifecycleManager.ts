@@ -133,10 +133,11 @@ export class ProfileLifecycleManager {
         result.config,
         this.ide,
       );
-      return {
+      this.savedBrowserConfigResult = {
         ...result,
         config: serializedConfig,
       };
+      return this.savedBrowserConfigResult;
     }
   }
 }

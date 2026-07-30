@@ -2,6 +2,7 @@ import { ModelDescription, Tool } from "core";
 import {
   DEFAULT_AGENT_SYSTEM_MESSAGE,
   DEFAULT_CHAT_SYSTEM_MESSAGE,
+  DEFAULT_LIGHTWEIGHT_CHAT_SYSTEM_MESSAGE,
   DEFAULT_PLAN_SYSTEM_MESSAGE,
 } from "core/llm/defaultSystemMessages";
 import { getBaseSystemMessage, NO_TOOL_WARNING } from "./getBaseSystemMessage";
@@ -50,6 +51,11 @@ test("getBaseSystemMessage should return the correct system message based on mod
   expect(getBaseSystemMessage("chat", {} as ModelDescription, [mockTool])).toBe(
     DEFAULT_CHAT_SYSTEM_MESSAGE,
   );
+
+  // Test lightweight chat mode ignores custom model prompts
+  expect(getBaseSystemMessage("lightweight-chat", mockModel, [mockTool])).toBe(
+    DEFAULT_LIGHTWEIGHT_CHAT_SYSTEM_MESSAGE,
+  );
 });
 
 test("getBaseSystemMessage should append no-tools warning for agent/plan modes without tools", () => {
@@ -72,6 +78,11 @@ test("getBaseSystemMessage should append no-tools warning for agent/plan modes w
   // Test chat mode without tools (should not append warning)
   expect(getBaseSystemMessage("chat", mockModel, [])).toBe(
     "Custom Chat System Message",
+  );
+
+  // Test lightweight chat mode without tools (should not append warning)
+  expect(getBaseSystemMessage("lightweight-chat", mockModel, [])).toBe(
+    DEFAULT_LIGHTWEIGHT_CHAT_SYSTEM_MESSAGE,
   );
 
   // Test agent mode with undefined tools

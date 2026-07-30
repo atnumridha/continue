@@ -474,6 +474,21 @@ describe("sessionSlice streamUpdate", () => {
   });
 });
 
+describe("sessionSlice streaming status", () => {
+  it("sets and clears the user-visible streaming status", () => {
+    let state = sessionSlice.reducer(
+      sessionSlice.getInitialState(),
+      sessionSlice.actions.setStreamingStatus("Waiting for local MLX."),
+    );
+
+    expect(state.streamingStatus).toBe("Waiting for local MLX.");
+
+    state = sessionSlice.reducer(state, sessionSlice.actions.setInactive());
+
+    expect(state.streamingStatus).toBeUndefined();
+  });
+});
+
 describe("sessionSlice apply state lifecycle", () => {
   it("does not reopen a closed apply from a late streaming update", () => {
     let state = sessionSlice.reducer(

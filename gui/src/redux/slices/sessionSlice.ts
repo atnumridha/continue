@@ -209,6 +209,7 @@ export type ChatHistoryItemWithMessageId = ChatHistoryItem & {
 export type SessionRuntimeState = {
   history: ChatHistoryItemWithMessageId[];
   isStreaming: boolean;
+  streamingStatus?: string;
   title: string;
   id: string;
   streamAborter: AbortController;
@@ -277,6 +278,7 @@ export const INITIAL_SESSION_STATE: SessionState = {
   allSessionMetadata: [],
   history: [],
   isStreaming: false,
+  streamingStatus: undefined,
   title: NEW_SESSION_TITLE,
   id: uuidv4(),
   streamAborter: new AbortController(),
@@ -321,6 +323,9 @@ export const sessionSlice = createSlice({
     },
     setActive: (state) => {
       state.isStreaming = true;
+    },
+    setStreamingStatus: (state, action: PayloadAction<string | undefined>) => {
+      state.streamingStatus = action.payload;
     },
     setIsGatheringContext: (state, { payload }: PayloadAction<boolean>) => {
       const curMessage = state.history.at(-1);
@@ -583,6 +588,7 @@ export const sessionSlice = createSlice({
       }
 
       state.isStreaming = false;
+      state.streamingStatus = undefined;
     },
     markResponseContinuationRequested: (
       state,
@@ -634,6 +640,7 @@ export const sessionSlice = createSlice({
       }
 
       state.isStreaming = false;
+      state.streamingStatus = undefined;
     },
     setSessionChatModelTitle: (
       state,
@@ -1235,6 +1242,7 @@ export const {
   addContextItemsAtIndex,
   setAppliedRulesAtIndex,
   setInactive,
+  setStreamingStatus,
   markResponseContinuationRequested,
   streamUpdate,
   newSession,

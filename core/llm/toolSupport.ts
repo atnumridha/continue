@@ -235,6 +235,15 @@ export const PROVIDER_TOOL_SUPPORT: Record<string, (model: string) => boolean> =
       const ollamaFn = PROVIDER_TOOL_SUPPORT["ollama"];
       return ollamaFn(model) || ollamaFn(normalized);
     },
+    mlx: (model) => {
+      const lower = model.toLowerCase();
+      return (
+        lower.includes("gemma-4") ||
+        lower.includes("gemma4") ||
+        lower.includes("qwen3") ||
+        lower.includes("qwen-3")
+      );
+    },
     sambanova: (model) => {
       // https://docs.sambanova.ai/cloud/docs/capabilities/function-calling
       if (

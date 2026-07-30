@@ -5,11 +5,48 @@ import { OpenAIApi } from "./OpenAI.js";
 import { OpenAIConfig } from "../types.js";
 
 const OCA_SECRETS_FILE = path.join(os.homedir(), ".codex", "oca-secrets.json");
+const CLINE_SECRETS_FILE = path.join(
+  os.homedir(),
+  ".cline",
+  "data",
+  "secrets.json",
+);
+const CLINE_PROVIDERS_FILE = path.join(
+  os.homedir(),
+  ".cline",
+  "data",
+  "settings",
+  "providers.json",
+);
 const OCA_BASE_URL =
   "https://code-internal.aiservice.us-chicago-1.oci.oraclecloud.com/20250206/app/litellm";
 const CLIENT_VERSION = "0.137.0";
 
 function readOcaToken(): string {
+  try {
+    if (fs.existsSync(CLINE_SECRETS_FILE)) {
+      const secrets = JSON.parse(
+        fs.readFileSync(CLINE_SECRETS_FILE, "utf8"),
+      ) as { ocaApiKey?: unknown };
+      const token = secrets.ocaApiKey;
+      if (typeof token === "string" && token.trim()) return token.trim();
+    }
+  } catch {
+    /* fall through */
+  }
+
+  try {
+    if (fs.existsSync(CLINE_PROVIDERS_FILE)) {
+      const settings = JSON.parse(
+        fs.readFileSync(CLINE_PROVIDERS_FILE, "utf8"),
+      ) as { providers?: { oca?: { settings?: { apiKey?: unknown } } } };
+      const token = settings.providers?.oca?.settings?.apiKey;
+      if (typeof token === "string" && token.trim()) return token.trim();
+    }
+  } catch {
+    /* fall through */
+  }
+
   try {
     if (fs.existsSync(OCA_SECRETS_FILE)) {
       const secrets = JSON.parse(
@@ -30,15 +67,15 @@ export interface OracleCodeAssistConfig extends OpenAIConfig {}
  * OracleCodeAssist API adapter for Qivryn's openai-adapters package.
  *
  * Talks directly to Oracle Code Assist's LiteLLM HTTPS endpoint — no proxy.
- * Reads the JWT token from ~/.codex/oca-secrets.json (written by
- * codex-oca-temp.sh login) or the OCA_API_KEY environment variable.
+ * Reads Cline's current OCA credential first, then falls back to
+ * ~/.codex/oca-secrets.json and the OCA_API_KEY environment variable.
  */
 export class OracleCodeAssistApi extends OpenAIApi {
   constructor(config: OracleCodeAssistConfig) {
     super({
       ...config,
-      apiBase: config.apiBase ?? `${OCA_BASE_URL}/v1/`,
-      apiKey: config.apiKey ?? readOcaToken(),
+      apiBase: config.apiBase ?? `${OCA_BASE_URL}/`,
+      apiKey: config.apiKey?.trim() || readOcaToken(),
     });
   }
 

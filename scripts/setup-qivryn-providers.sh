@@ -137,6 +137,7 @@ info "Done"
 printf '\n'
 printf 'Providers:\n'
 printf '  github-copilot  →  https://api.githubcopilot.com/   (direct, auto-refresh)\n'
+printf '  mlx             →  built-in local MLX bridge          (Qivryn-managed)\n'
 printf '  oca             →  Oracle Code Assist LiteLLM HTTPS  (direct, JWT)\n'
 printf '\n'
 printf 'Reload VS Code to apply: Developer → Reload Window\n'

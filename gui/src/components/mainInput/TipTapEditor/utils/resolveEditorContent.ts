@@ -13,6 +13,7 @@ import { stripImages } from "core/util/messageContent";
 import { IIdeMessenger } from "../../../../context/IdeMessenger";
 import { setIsGatheringContext } from "../../../../redux/slices/sessionSlice";
 import { RootState } from "../../../../redux/store";
+import { isSimpleConversationalPrompt } from "../../../../util/promptIntent";
 import { processEditorContent } from "./processEditorContent";
 import { renderSlashCommandPrompt } from "./renderSlashCommand";
 import { GetContextRequest } from "./types";
@@ -182,6 +183,7 @@ async function gatherContextItems({
   // noContext modifier adds currently open file if it's not already present
   if (
     !modifiers.noContext &&
+    !isSimpleConversationalPrompt(parts) &&
     !deduplicatedInputs.some((item) => item.provider === "currentFile")
   ) {
     const currentFileResponse = await ideMessenger.request(

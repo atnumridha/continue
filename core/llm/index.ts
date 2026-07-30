@@ -1037,7 +1037,12 @@ export abstract class BaseLLM implements ILLM {
   }
 
   private automaticRetryOptions(): RetryOptions {
+    const isFastLocalProvider = this.providerName === "mlx";
+
     return {
+      ...(isFastLocalProvider
+        ? { maxAttempts: 2, initialDelayMs: 250, maxDelayMs: 1_000 }
+        : {}),
       onRetry: ({ attempt, maxAttempts, delayMs, error }) => {
         console.warn(
           `Transient LLM connection failure. Retrying automatically ` +

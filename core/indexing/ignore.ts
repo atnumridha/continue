@@ -187,6 +187,11 @@ export const ADDITIONAL_INDEXING_IGNORE_DIRS = [
   ".vscode/",
   ".idea/",
   ".vs/",
+
+  // Qivryn agent runs keep full repository worktrees under the global data dir.
+  // They are runtime state and should not be indexed as user workspace context.
+  ".qivryn/agents/worktrees/",
+  "agents/worktrees/",
 ];
 
 // Combined patterns: security + additional

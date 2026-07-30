@@ -378,6 +378,29 @@ describe("Configuration", () => {
     });
   });
 
+  describe("mlx api base", () => {
+    it('should have correct default API base for "mlx"', () => {
+      const mlx = constructLlmApi({
+        provider: "mlx",
+      });
+
+      expect((mlx as OpenAIApi).openai.baseURL).toBe(
+        "http://127.0.0.1:8080/v1/",
+      );
+    });
+
+    it('should append /v1 to apiBase for "mlx"', () => {
+      const mlx = constructLlmApi({
+        provider: "mlx",
+        apiBase: "http://127.0.0.1:8080",
+      });
+
+      expect((mlx as OpenAIApi).openai.baseURL).toBe(
+        "http://127.0.0.1:8080/v1/",
+      );
+    });
+  });
+
   describe("bedrock authentication", () => {
     it("should configure Bedrock with API key authentication", () => {
       const bedrock = constructLlmApi({

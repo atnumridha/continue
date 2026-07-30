@@ -1,7 +1,30 @@
 import type { ChatHistoryItem } from "core";
 import { chatMessageIsEmpty } from "core/llm/messages";
 
-export const GUI_AUTO_COMPACTION_THRESHOLD = 0.8;
+export const GUI_AUTO_COMPACTION_THRESHOLD = 0.55;
+export const GUI_AUTO_COMPACTION_INPUT_TOKEN_THRESHOLD = 96_000;
+
+function shouldAutoCompact(
+  contextPercentage?: number,
+  isPruned = false,
+  inputTokens?: number,
+): boolean {
+  if (isPruned) {
+    return true;
+  }
+
+  if (
+    inputTokens !== undefined &&
+    inputTokens >= GUI_AUTO_COMPACTION_INPUT_TOKEN_THRESHOLD
+  ) {
+    return true;
+  }
+
+  return (
+    contextPercentage !== undefined &&
+    contextPercentage >= GUI_AUTO_COMPACTION_THRESHOLD
+  );
+}
 
 /** Find a stable completed response that is safe to use as a summary boundary. */
 export function getManualCompactionTarget(
@@ -30,12 +53,9 @@ export function getAutoCompactionTarget(
   history: ChatHistoryItem[],
   contextPercentage?: number,
   isPruned = false,
+  inputTokens?: number,
 ): number | undefined {
-  if (
-    !isPruned &&
-    (contextPercentage === undefined ||
-      contextPercentage < GUI_AUTO_COMPACTION_THRESHOLD)
-  ) {
+  if (!shouldAutoCompact(contextPercentage, isPruned, inputTokens)) {
     return undefined;
   }
 

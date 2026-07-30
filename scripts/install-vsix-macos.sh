@@ -72,12 +72,12 @@ if [[ ! -f "$vsix_path" ]]; then
 fi
 
 if [[ -z "$code_cli" ]]; then
-  if command -v code >/dev/null; then
-    code_cli="$(command -v code)"
-  elif [[ -x "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" ]]; then
+  if [[ -x "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" ]]; then
     code_cli="/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
   elif [[ -x "/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin/code" ]]; then
     code_cli="/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin/code"
+  elif command -v code >/dev/null; then
+    code_cli="$(command -v code)"
   else
     echo "VS Code CLI was not found. Pass --code-cli /path/to/code." >&2
     exit 1

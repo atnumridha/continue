@@ -10,6 +10,7 @@ import OpenRouter from "./OpenRouter.js";
 import xAI from "./xAI.js";
 import Mistral from "./Mistral.js";
 import LMStudio from "./LMStudio.js";
+import Mlx from "./Mlx.js";
 import Cerebras from "./Cerebras.js";
 import DeepInfra from "./DeepInfra.js";
 import Nvidia from "./Nvidia.js";
@@ -253,6 +254,13 @@ createOpenAISubclassTests(Mistral, {
 createOpenAISubclassTests(LMStudio, {
   providerName: "lmstudio",
   defaultApiBase: "http://localhost:1234/v1/",
+});
+
+createOpenAISubclassTests(Mlx, {
+  providerName: "mlx",
+  customBodyOptions: {
+    max_tokens: 1024,
+  },
 });
 
 createOpenAISubclassTests(Cerebras, {

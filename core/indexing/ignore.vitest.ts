@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_SECURITY_IGNORE_DIRS,
   DEFAULT_SECURITY_IGNORE_FILETYPES,
+  defaultIgnoreFileAndDir,
   defaultFileAndFolderSecurityIgnores,
   isSecurityConcern,
 } from "./ignore";
@@ -261,5 +262,19 @@ describe("isSecurityConcern", () => {
         expect(functionResult).toBe(ignoreResult);
       });
     });
+  });
+});
+
+describe("default indexing ignores", () => {
+  it("ignores Qivryn internal agent worktrees", () => {
+    expect(
+      defaultIgnoreFileAndDir.ignores(
+        ".qivryn/agents/worktrees/run-1/core/index.ts",
+      ),
+    ).toBe(true);
+    expect(
+      defaultIgnoreFileAndDir.ignores("agents/worktrees/run-1/core/index.ts"),
+    ).toBe(true);
+    expect(defaultIgnoreFileAndDir.ignores("src/main.ts")).toBe(false);
   });
 });

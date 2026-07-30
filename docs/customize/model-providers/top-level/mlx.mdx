@@ -1,0 +1,89 @@
+---
+title: "MLX"
+---
+
+<Info>
+  Qivryn runs MLX models through a built-in local MLX bridge on Apple Silicon.
+</Info>
+
+## Configuration
+
+Qivryn includes built-in MLX entries for local Apple Silicon use. When an MLX model is used, Qivryn starts and owns a private localhost MLX bridge for that model. You do not need to start `mlx_lm.server` manually or keep port 8080 reserved.
+
+<Tabs>
+  <Tab title="YAML">
+  ```yaml title="config.yaml"
+  name: My Config
+  version: 0.0.1
+  schema: v1
+
+  models:
+    - name: MLX Gemma 4 12B
+      provider: mlx
+      model: mlx-community/gemma-4-12B-it-4bit
+      contextLength: 262144
+      defaultCompletionOptions:
+        maxTokens: 1024
+      requestOptions:
+        extraBodyProperties:
+          chat_template_kwargs:
+            enable_thinking: false
+      capabilities:
+        - tool_use
+  ```
+  </Tab>
+  <Tab title="JSON (Deprecated)">
+  ```json title="config.json"
+  {
+    "models": [
+      {
+        "title": "MLX Gemma 4 12B",
+        "provider": "mlx",
+        "model": "mlx-community/gemma-4-12B-it-4bit",
+        "contextLength": 262144,
+        "completionOptions": {
+          "maxTokens": 1024
+        },
+        "capabilities": {
+          "tools": true
+        }
+      }
+    ]
+  }
+  ```
+  </Tab>
+</Tabs>
+
+## Built-in runtime startup
+
+For built-in MLX models, Qivryn allocates a private local port and launches the MLX Python runtime itself. The internal process uses MLX's OpenAI-compatible server module, so Qivryn can reuse its normal chat streaming and tool-call pipeline.
+
+Qivryn writes the internal runtime log here:
+
+```shell
+~/.qivryn/logs/mlx_lm.server.log
+```
+
+Qivryn looks for an MLX-capable Python in common locations, including `/opt/miniconda3/bin/python`, Homebrew, `/usr/local/bin`, and the Python.org framework path.
+
+You can override the Python executable with:
+
+```shell
+QIVRYN_MLX_PYTHON=/path/to/python
+```
+
+For diagnosis, you can still force Qivryn to use an externally managed MLX-compatible endpoint by setting `apiBase` and:
+
+```shell
+QIVRYN_MLX_USE_EXTERNAL_SERVER=1
+```
+
+You can also disable automatic startup with:
+
+```shell
+QIVRYN_MLX_AUTO_START=0
+```
+
+<Note>
+  A legacy `apiBase: http://127.0.0.1:8080/v1/` MLX entry is treated as built-in managed MLX unless `QIVRYN_MLX_USE_EXTERNAL_SERVER=1` is set.
+</Note>

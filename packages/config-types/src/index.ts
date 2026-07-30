@@ -47,6 +47,7 @@ export const modelDescriptionSchema = z.object({
     "anthropic",
     "cohere",
     "ollama",
+    "mlx",
     "huggingface-tgi",
     "huggingface-inference-api",
     "replicate",

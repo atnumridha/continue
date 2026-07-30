@@ -2,6 +2,7 @@ import { ModelDescription, Tool } from "core";
 import {
   DEFAULT_AGENT_SYSTEM_MESSAGE,
   DEFAULT_CHAT_SYSTEM_MESSAGE,
+  DEFAULT_LIGHTWEIGHT_CHAT_SYSTEM_MESSAGE,
   DEFAULT_PLAN_SYSTEM_MESSAGE,
 } from "core/llm/defaultSystemMessages";
 
@@ -21,6 +22,8 @@ export function getBaseSystemMessage(
       baseMessage +=
         "\n\nDEBUG MODE: Reproduce and isolate the failure before editing. Form hypotheses, gather concrete evidence, apply the smallest safe fix, and validate the original failure path plus relevant regressions.";
     }
+  } else if (messageMode === "lightweight-chat") {
+    baseMessage = DEFAULT_LIGHTWEIGHT_CHAT_SYSTEM_MESSAGE;
   } else if (messageMode === "plan") {
     baseMessage = model.basePlanSystemMessage ?? DEFAULT_PLAN_SYSTEM_MESSAGE;
   } else {
@@ -28,7 +31,11 @@ export function getBaseSystemMessage(
   }
 
   // Add no-tools warning for agent/plan modes when no tools are available
-  if (messageMode !== "chat" && (!activeTools || activeTools.length === 0)) {
+  if (
+    messageMode !== "chat" &&
+    messageMode !== "lightweight-chat" &&
+    (!activeTools || activeTools.length === 0)
+  ) {
     baseMessage += NO_TOOL_WARNING;
   }
 

@@ -2479,6 +2479,43 @@ export const models: { [key: string]: ModelPackage } = {
     providerOptions: ["ollama"],
     isOpenSource: true,
   },
+  mlxGemma412b: {
+    title: "MLX Gemma 4 12B",
+    description:
+      "Gemma 4 12B IT quantized for MLX. Qivryn starts and manages the local MLX runtime on Apple Silicon.",
+    params: {
+      title: "MLX Gemma 4 12B",
+      model: "mlx-community/gemma-4-12B-it-4bit",
+      contextLength: 262_144,
+      completionOptions: {
+        maxTokens: 1024,
+      },
+      capabilities: {
+        tools: true,
+      },
+    },
+    icon: "gemini.png",
+    providerOptions: ["mlx"],
+    isOpenSource: true,
+  },
+  mlxQwen3CoderNext4bit: {
+    title: "MLX Qwen3 Coder Next 4-bit",
+    description:
+      "Qwen3 Coder Next quantized for MLX. Qivryn starts and manages the local MLX runtime on Apple Silicon.",
+    params: {
+      title: "MLX Qwen3 Coder Next 4-bit",
+      model: "mlx-community/Qwen3-Coder-Next-4bit",
+      completionOptions: {
+        maxTokens: 1024,
+      },
+      capabilities: {
+        tools: true,
+      },
+    },
+    icon: "qwen.png",
+    providerOptions: ["mlx"],
+    isOpenSource: true,
+  },
   phi3mini: {
     title: "Microsoft Phi 3 mini",
     description:

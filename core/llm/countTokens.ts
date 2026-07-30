@@ -565,6 +565,14 @@ function compileChatMessages({
     inputTokens,
     contextLength,
     availableTokens,
+    tokenBreakdown: {
+      system: systemMsgTokens,
+      history: currentTotal,
+      latest: lastMessagesTokens,
+      tools: toolTokens,
+      safetyBuffer: countingSafetyBuffer,
+      reservedOutput: minOutputTokens,
+    },
   };
 }
 

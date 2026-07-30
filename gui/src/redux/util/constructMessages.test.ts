@@ -429,6 +429,58 @@ describe("constructMessages", () => {
     expect(toolMessage.content).toContain("Search result content");
   });
 
+  test("uses prompt-bounded tool output when replaying history", () => {
+    const toolCall: ToolCall = {
+      id: "tool-call-1",
+      type: "function",
+      function: {
+        name: "read_file",
+        arguments: '{"filepath": "large.log"}',
+      },
+    };
+    const assistantWithToolCall: AssistantChatMessage = {
+      role: "assistant",
+      content: "I will read that",
+      toolCalls: [toolCall],
+    };
+
+    mockHistory = [
+      {
+        message: {
+          role: "user",
+          content: "Read the large file",
+        } as UserChatMessage,
+        contextItems: [],
+      },
+      {
+        message: assistantWithToolCall,
+        contextItems: [],
+        toolCallStates: [
+          {
+            toolCallId: "tool-call-1",
+            toolCall,
+            status: "done",
+            parsedArgs: { filepath: "large.log" },
+            output: [createContextItem("large-output", "x".repeat(40_000))],
+          },
+        ],
+      },
+    ];
+
+    const { messages } = constructMessages(
+      mockHistory,
+      "Base System Message",
+      mockRules,
+      {},
+    );
+
+    const toolMessage = messages[3] as ToolResultChatMessage;
+    expect(toolMessage.content.length).toBeLessThan(10_000);
+    expect(toolMessage.content).toContain(
+      "tool output truncated for model prompt",
+    );
+  });
+
   test("should show cancelled message for cancelled tool calls", () => {
     const assistantWithToolCall: AssistantChatMessage = {
       role: "assistant",

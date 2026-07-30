@@ -92,6 +92,7 @@ export function createEditorConfig(options: {
 
   const { getSubmenuContextItems } = useSubmenuContextProviders();
   const defaultModel = useAppSelector(selectSelectedChatModel);
+  const isConfigLoading = useAppSelector((state) => state.config.loading);
   const isStreaming = useAppSelector((state) => state.session.isStreaming);
   const historyLength = useAppSelector((store) => store.session.history.length);
   const codeToEdit = useAppSelector((store) => store.editModeState.codeToEdit);
@@ -101,6 +102,7 @@ export function createEditorConfig(options: {
   const inSubmenuRef = useRef<string | undefined>(undefined);
   const inDropdownRef = useRef(false);
   const defaultModelRef = useUpdatingRef(defaultModel);
+  const isConfigLoadingRef = useUpdatingRef(isConfigLoading);
   const isStreamingRef = useUpdatingRef(isStreaming);
   const getSubmenuContextItemsRef = useUpdatingRef(getSubmenuContextItems);
   const availableContextProvidersRef = useUpdatingRef(
@@ -402,7 +404,9 @@ export function createEditorConfig(options: {
     }
     if (
       (isStreamingRef.current && !props.isMainInput) ||
-      (codeToEdit.length === 0 && isInEdit)
+      (codeToEdit.length === 0 && isInEdit) ||
+      (props.isMainInput &&
+        (isConfigLoadingRef.current || !defaultModelRef.current))
     ) {
       return;
     }

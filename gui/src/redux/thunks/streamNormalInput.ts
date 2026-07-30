@@ -4,7 +4,10 @@ import { getRuleId } from "core/llm/rules/getSystemMessageWithRules";
 import { ToCoreProtocol } from "core/protocol";
 import { BUILT_IN_GROUP_NAME } from "core/tools/builtIn";
 import { selectActiveTools } from "../selectors/selectActiveTools";
-import { selectSelectedChatModel } from "../slices/configSlice";
+import {
+  selectSelectedChatModel,
+  setConfigResult,
+} from "../slices/configSlice";
 import {
   abortStream,
   addPromptCompletionPair,
@@ -17,6 +20,7 @@ import {
   setInactive,
   setInlineErrorMessage,
   setIsPruned,
+  setStreamingStatus,
   setToolGenerated,
   streamUpdate,
   updateHistoryItemAtIndex,
@@ -28,10 +32,20 @@ import {
 import { ThunkApiType } from "../store";
 import { constructMessages } from "../util/constructMessages";
 import {
+  GUI_AUTO_COMPACTION_INPUT_TOKEN_THRESHOLD,
   GUI_AUTO_COMPACTION_THRESHOLD,
   getAutoCompactionTarget,
 } from "../../util/autoCompaction";
+import { withAsyncTimeout } from "../../util/asyncTimeout";
 import { createStreamUpdateBatcher } from "../../util/streamUpdateBatcher";
+import {
+  isSimpleConversationalPrompt,
+  selectPromptRelevantTools,
+} from "../../util/promptIntent";
+import {
+  compactRulesForLocalMlxRequest,
+  selectLocalMlxPromptRelevantTools,
+} from "../../util/localMlxRequest";
 
 import { modelSupportsNativeTools } from "core/llm/toolSupport";
 import { applyToolOverrides } from "core/tools/applyToolOverrides";
@@ -50,6 +64,9 @@ import { preprocessToolCalls } from "./preprocessToolCallArgs";
 import { streamResponseAfterToolCall } from "./streamResponseAfterToolCall";
 
 const MAX_GUI_AUTO_COMPACTION_ATTEMPTS = 3;
+const COMPACTION_TIMEOUT_MS = 90_000;
+const COMPILE_CHAT_TIMEOUT_MS = 90_000;
+const STREAM_CHUNK_TIMEOUT_MS = 180_000;
 
 function areCurrentToolCallsComplete(
   toolCalls: Array<{ status: string }>,
@@ -98,6 +115,36 @@ function buildReasoningCompletionOptions(
   return reasoningOptions;
 }
 
+function isMlxModel(model: ModelDescription): boolean {
+  return (
+    model.underlyingProviderName === "mlx" ||
+    (model as ModelDescription & { provider?: string }).provider === "mlx"
+  );
+}
+
+function formatTokenCount(tokens: number): string {
+  if (tokens >= 1000) {
+    return `${Math.round(tokens / 1000)}K`;
+  }
+  return `${tokens}`;
+}
+
+function buildMlxPrefillStatus(
+  inputTokens: number | undefined,
+  contextPercentage: number,
+  contextLength: number,
+  toolCount: number,
+): string {
+  const promptTokens =
+    inputTokens ?? Math.round(contextPercentage * contextLength);
+  const toolSummary =
+    toolCount > 0
+      ? `${toolCount} tool${toolCount === 1 ? "" : "s"} available.`
+      : "No tools attached to this request.";
+
+  return `Starting Qivryn's built-in MLX runtime if needed, then processing ${formatTokenCount(promptTokens)} prompt tokens before the first response or tool call. ${toolSummary}`;
+}
+
 export const streamNormalInput = createAsyncThunk<
   void,
   {
@@ -132,14 +179,63 @@ export const streamNormalInput = createAsyncThunk<
       throw new Error(message);
     }
     let state = getScopedState();
-    const selectedChatModel =
+    let selectedChatModel =
       state.config.config?.modelsByRole?.chat?.find(
         (model) => model.title === state.session.chatModelTitle,
       ) ?? selectSelectedChatModel(state);
 
+    // The webview can accept a keyboard submission before its initial config
+    // message arrives. Recover from that transient state by asking core for
+    // its already-initialized serialized profile before failing.
+    if (!selectedChatModel) {
+      const profileInfo = await extra.ideMessenger.request(
+        "config/getSerializedProfileInfo",
+        undefined,
+      );
+      if (
+        profileInfo.status === "success" &&
+        profileInfo.content.result.config &&
+        !profileInfo.content.result.configLoadInterrupted
+      ) {
+        dispatch(setConfigResult(profileInfo.content.result));
+        state = getScopedState();
+        selectedChatModel =
+          state.config.config?.modelsByRole?.chat?.find(
+            (model) => model.title === state.session.chatModelTitle,
+          ) ?? selectSelectedChatModel(state);
+      }
+    }
+
+    // On a cold extension-host start, Core can still be assembling the local
+    // profile when the first request arrives. Do one explicit refresh and
+    // readback rather than surfacing a misleading "No chat model selected"
+    // error for a persisted selection.
+    if (!selectedChatModel) {
+      await extra.ideMessenger.request("config/refreshProfiles", {
+        reason: "Recovering chat model after initial configuration load",
+      });
+      const refreshedProfileInfo = await extra.ideMessenger.request(
+        "config/getSerializedProfileInfo",
+        undefined,
+      );
+      if (
+        refreshedProfileInfo.status === "success" &&
+        refreshedProfileInfo.content.result.config &&
+        !refreshedProfileInfo.content.result.configLoadInterrupted
+      ) {
+        dispatch(setConfigResult(refreshedProfileInfo.content.result));
+        state = getScopedState();
+        selectedChatModel =
+          state.config.config?.modelsByRole?.chat?.find(
+            (model) => model.title === state.session.chatModelTitle,
+          ) ?? selectSelectedChatModel(state);
+      }
+    }
+
     if (!selectedChatModel) {
       throw new Error("No chat model selected");
     }
+    const isMlxRequest = isMlxModel(selectedChatModel);
 
     const compactAutomatically = async (
       compactionTarget: number | undefined,
@@ -156,13 +252,14 @@ export const streamNormalInput = createAsyncThunk<
         setCompactionLoading({ index: compactionTarget, loading: true }),
       );
       try {
-        const compacted = await extra.ideMessenger.request(
-          "conversation/compact",
-          {
+        const compacted = await withAsyncTimeout(
+          extra.ideMessenger.request("conversation/compact", {
             index: compactionTarget,
             sessionId,
             automatic: true,
-          },
+          }),
+          COMPACTION_TIMEOUT_MS,
+          "Automatic context compaction",
         );
         if (compacted?.status === "success" && compacted.content) {
           scopedDispatch(
@@ -196,8 +293,17 @@ export const streamNormalInput = createAsyncThunk<
         state.session.history,
         state.session.contextPercentage,
         state.session.isPruned,
+        state.session.contextUsage?.inputTokens,
       ),
     );
+
+    const latestUserPrompt = state.session.history
+      .slice()
+      .reverse()
+      .find((item) => item.message.role === "user")?.message.content;
+    const useLightweightChatRequest =
+      state.session.mode === "agent" &&
+      isSimpleConversationalPrompt(latestUserPrompt);
 
     // Get tools and apply model-level overrides (disabled, description, etc.)
     let activeTools = selectActiveTools(state);
@@ -212,6 +318,13 @@ export const streamNormalInput = createAsyncThunk<
           console.warn(`Tool override warning: ${error.message}`);
         }
       }
+    }
+    if (useLightweightChatRequest) {
+      activeTools = [];
+    } else if (state.session.mode === "agent") {
+      activeTools = isMlxRequest
+        ? selectLocalMlxPromptRelevantTools(activeTools, latestUserPrompt)
+        : selectPromptRelevantTools(activeTools, latestUserPrompt);
     }
 
     // Use the centralized selector to determine if system message tools should be used
@@ -249,7 +362,7 @@ export const streamNormalInput = createAsyncThunk<
 
     // Construct messages (excluding system message)
     const baseSystemMessage = getBaseSystemMessage(
-      state.session.mode,
+      useLightweightChatRequest ? "lightweight-chat" : state.session.mode,
       selectedChatModel,
       activeTools,
     );
@@ -267,10 +380,19 @@ export const streamNormalInput = createAsyncThunk<
       return { ...item, message: messageWithoutId };
     });
 
+    const rulesForRequest = useLightweightChatRequest
+      ? []
+      : isMlxRequest
+        ? compactRulesForLocalMlxRequest(
+            state.config.config.rules,
+            latestUserPrompt,
+          )
+        : state.config.config.rules;
+
     const { messages, appliedRules, appliedRuleIndex } = constructMessages(
       withoutMessageIds,
       systemMessage,
-      state.config.config.rules,
+      rulesForRequest,
       state.ui.ruleSettings,
       systemToolsFramework,
     );
@@ -286,11 +408,22 @@ export const streamNormalInput = createAsyncThunk<
 
     scopedDispatch(setActive());
     scopedDispatch(setInlineErrorMessage(undefined));
+    if (isMlxRequest) {
+      scopedDispatch(
+        setStreamingStatus(
+          `Preparing local MLX request. ${activeTools.length} tool${activeTools.length === 1 ? "" : "s"} available.`,
+        ),
+      );
+    }
 
-    const precompiledRes = await extra.ideMessenger.request("llm/compileChat", {
-      messages,
-      options: completionOptions,
-    });
+    const precompiledRes = await withAsyncTimeout(
+      extra.ideMessenger.request("llm/compileChat", {
+        messages,
+        options: completionOptions,
+      }),
+      COMPILE_CHAT_TIMEOUT_MS,
+      "Chat request preparation",
+    );
 
     if (precompiledRes.status === "error") {
       if (precompiledRes.error.includes("Not enough context")) {
@@ -328,31 +461,52 @@ export const streamNormalInput = createAsyncThunk<
       inputTokens,
       contextLength,
       availableTokens,
+      tokenBreakdown,
     } = precompiledRes.content;
 
     scopedDispatch(setIsPruned(didPrune));
     scopedDispatch(setContextPercentage(contextPercentage));
     const configuredContextLength = selectedChatModel.contextLength ?? 32_768;
+    const resolvedContextLength = contextLength ?? configuredContextLength;
     scopedDispatch(
       setContextUsage({
         inputTokens:
           inputTokens ??
           Math.round(contextPercentage * configuredContextLength),
-        contextLength: contextLength ?? configuredContextLength,
+        contextLength: resolvedContextLength,
         availableTokens,
         model: selectedChatModel.model,
+        tokenBreakdown,
       }),
     );
+    if (isMlxRequest) {
+      scopedDispatch(
+        setStreamingStatus(
+          buildMlxPrefillStatus(
+            inputTokens,
+            contextPercentage,
+            resolvedContextLength,
+            activeTools.length,
+          ),
+        ),
+      );
+    }
+
+    const shouldCompactForCost =
+      didPrune ||
+      contextPercentage >= GUI_AUTO_COMPACTION_THRESHOLD ||
+      (inputTokens ?? 0) >= GUI_AUTO_COMPACTION_INPUT_TOKEN_THRESHOLD;
 
     if (
       autoCompactAttempts < MAX_GUI_AUTO_COMPACTION_ATTEMPTS &&
-      (didPrune || contextPercentage >= GUI_AUTO_COMPACTION_THRESHOLD)
+      shouldCompactForCost
     ) {
       const didCompact = await compactAutomatically(
         getAutoCompactionTarget(
           getScopedState().session.history,
           contextPercentage,
           didPrune,
+          inputTokens,
         ),
       );
       if (didCompact) {
@@ -405,7 +559,13 @@ export const streamNormalInput = createAsyncThunk<
         }
       });
 
-      let next = await gen.next();
+      let next = await withAsyncTimeout(
+        gen.next(),
+        STREAM_CHUNK_TIMEOUT_MS,
+        "Model response stream",
+        () => streamAborter.abort(),
+      );
+      let hasFirstStreamChunk = false;
       try {
         while (!next.done) {
           if (!getScopedState().session.isStreaming) {
@@ -422,8 +582,17 @@ export const streamNormalInput = createAsyncThunk<
             break;
           }
 
+          if (isMlxRequest && !hasFirstStreamChunk) {
+            hasFirstStreamChunk = true;
+            scopedDispatch(setStreamingStatus(undefined));
+          }
           streamUpdates.enqueue(next.value);
-          next = await gen.next();
+          next = await withAsyncTimeout(
+            gen.next(),
+            STREAM_CHUNK_TIMEOUT_MS,
+            "Model response stream",
+            () => streamAborter.abort(),
+          );
         }
       } finally {
         // Make final text and tool-call deltas visible before completion logic
@@ -499,6 +668,18 @@ export const streamNormalInput = createAsyncThunk<
     const originalToolCalls = selectCurrentToolCalls(state1).filter(
       ({ toolCallId }) => !toolCallIdsBeforeStream.has(toolCallId),
     );
+    if (isMlxRequest && originalToolCalls.length > 0) {
+      const toolNames = originalToolCalls
+        .map((tc) => tc.toolCall.function.name)
+        .filter(Boolean);
+      scopedDispatch(
+        setStreamingStatus(
+          toolNames.length > 0
+            ? `MLX requested tool${toolNames.length === 1 ? "" : "s"}: ${toolNames.join(", ")}.`
+            : `MLX requested ${originalToolCalls.length} tool call${originalToolCalls.length === 1 ? "" : "s"}.`,
+        ),
+      );
+    }
     const generatingCalls = originalToolCalls.filter(
       (tc) => tc.status === "generating",
     );
@@ -517,6 +698,9 @@ export const streamNormalInput = createAsyncThunk<
       return;
     }
     const generatedCalls2 = selectPendingToolCalls(state2);
+    if (isMlxRequest && generatedCalls2.length > 0) {
+      scopedDispatch(setStreamingStatus("Checking MLX tool arguments."));
+    }
     await preprocessToolCalls(
       scopedDispatch,
       extra.ideMessenger,
@@ -530,6 +714,9 @@ export const streamNormalInput = createAsyncThunk<
     }
     const generatedCalls3 = selectPendingToolCalls(state3);
     const toolPolicies = state3.ui.toolSettings;
+    if (isMlxRequest && generatedCalls3.length > 0) {
+      scopedDispatch(setStreamingStatus("Checking MLX tool permissions."));
+    }
     const policies = await evaluateToolPolicies(
       scopedDispatch,
       extra.ideMessenger,
@@ -586,6 +773,18 @@ export const streamNormalInput = createAsyncThunk<
         return;
       }
       if (generatedCalls4.length > 0) {
+        if (isMlxRequest) {
+          const toolNames = generatedCalls4
+            .map((tc) => tc.toolCall.function.name)
+            .filter(Boolean);
+          scopedDispatch(
+            setStreamingStatus(
+              toolNames.length > 0
+                ? `Running tool${toolNames.length === 1 ? "" : "s"}: ${toolNames.join(", ")}.`
+                : `Running ${generatedCalls4.length} tool call${generatedCalls4.length === 1 ? "" : "s"}.`,
+            ),
+          );
+        }
         if (generatedCalls4.length === 1) {
           unwrapResult(
             await dispatch(

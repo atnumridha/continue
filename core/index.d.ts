@@ -1998,6 +1998,15 @@ export interface CompiledMessagesResult {
   contextLength?: number;
   /** Input budget after reserving safety and response tokens. */
   availableTokens?: number;
+  /** Local token-counter breakdown for the compiled request. */
+  tokenBreakdown?: {
+    system: number;
+    history: number;
+    latest: number;
+    tools: number;
+    safetyBuffer: number;
+    reservedOutput: number;
+  };
 }
 
 export interface AddToChatPayload {

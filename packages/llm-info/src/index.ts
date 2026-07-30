@@ -7,6 +7,7 @@ import { Gemini } from "./providers/gemini.js";
 import { Inception } from "./providers/inception.js";
 import { MiniMax } from "./providers/minimax.js";
 import { Mistral } from "./providers/mistral.js";
+import { Mlx } from "./providers/mlx.js";
 import { Ollama } from "./providers/ollama.js";
 import { OpenAi } from "./providers/openai.js";
 import { Vllm } from "./providers/vllm.js";
@@ -20,6 +21,7 @@ export const allModelProviders: ModelProvider[] = [
   Gemini,
   Anthropic,
   Mistral,
+  Mlx,
   Voyage,
   Azure,
   Ollama,

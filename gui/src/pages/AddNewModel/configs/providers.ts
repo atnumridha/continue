@@ -852,6 +852,31 @@ Select the \`GPT-4o\` model below to complete your provider configuration, but n
     collectInputFor: [...completionParamsInputsConfigs],
     downloadUrl: "https://lmstudio.ai/",
   },
+  mlx: {
+    title: "MLX",
+    provider: "mlx",
+    description:
+      "Run local MLX models directly through Qivryn's built-in MLX runtime support",
+    longDescription: `MLX runs models locally on Apple Silicon without Ollama or LM Studio.
+
+Qivryn starts and owns the local MLX runtime when an MLX model is used. It uses a private localhost port internally, so you do not need to start or keep a server running on port 8080.
+
+If you deliberately want to connect to an external OpenAI-compatible MLX endpoint, set apiBase on the model configuration.`,
+    tags: [ModelProviderTags.Local, ModelProviderTags.OpenSource],
+    packages: [
+      {
+        ...models.AUTODETECT,
+        params: {
+          ...models.AUTODETECT.params,
+          title: "MLX",
+        },
+      },
+      models.mlxGemma412b,
+      models.mlxQwen3CoderNext4bit,
+    ],
+    collectInputFor: [...completionParamsInputsConfigs],
+    downloadUrl: "https://github.com/ml-explore/mlx-lm",
+  },
   llamafile: {
     title: "llamafile",
     provider: "llamafile",

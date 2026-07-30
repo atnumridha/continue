@@ -12,6 +12,20 @@ import {
 import { useCompactConversation } from "../../util/compactConversation";
 import { ToolTip } from "../gui/Tooltip";
 
+function tokenBreakdownRows(usage: ContextUsageSnapshot | undefined) {
+  const breakdown = usage?.tokenBreakdown;
+  if (!breakdown) return [];
+
+  return [
+    ["System instructions", breakdown.system],
+    ["Tool definitions", breakdown.tools],
+    ["Earlier conversation", breakdown.history],
+    ["Latest message / tool turn", breakdown.latest],
+    ["Reserved for response", breakdown.reservedOutput],
+    ["Safety buffer", breakdown.safetyBuffer],
+  ] as const;
+}
+
 export function useContextUsagePresentation(): ReturnType<
   typeof contextUsagePresentation
 > & {
@@ -44,7 +58,7 @@ const ContextStatus = () => {
   const dispatch = useAppDispatch();
   const history = useAppSelector((state) => state.session.history);
   const isPruned = useAppSelector((state) => state.session.isPruned);
-  const { short, accessible, percent, isCompacting, isStale } =
+  const { short, accessible, percent, isCompacting, isStale, usage } =
     useContextUsagePresentation();
   const compactConversation = useCompactConversation();
 
@@ -64,6 +78,25 @@ const ContextStatus = () => {
       content={
         <div className="flex max-w-64 flex-col gap-1 text-left text-xs">
           <span>{accessible}</span>
+          {usage?.tokenBreakdown && (
+            <>
+              <span className="mt-1 font-medium">This request</span>
+              <div className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-0.5 font-mono">
+                {tokenBreakdownRows(usage).map(([label, tokens]) => (
+                  <span key={label} className="contents">
+                    <span className="font-sans">{label}</span>
+                    <span>{tokens.toLocaleString()}</span>
+                  </span>
+                ))}
+                <span className="font-sans">Sent to model</span>
+                <span>{usage.inputTokens.toLocaleString()}</span>
+              </div>
+              <span className="text-description mt-1">
+                Counts are Qivryn&apos;s local request estimate; provider
+                billing can differ.
+              </span>
+            </>
+          )}
           {isStale && (
             <span>Usage will recalculate after the next message.</span>
           )}

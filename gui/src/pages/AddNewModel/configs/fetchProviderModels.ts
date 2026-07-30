@@ -76,6 +76,33 @@ function toGenericPackage(model: FetchedModel, provider: string): ModelPackage {
   };
 }
 
+function toMlxPackage(model: FetchedModel): ModelPackage {
+  const id = model.modelId ?? model.name;
+  const lower = id.toLowerCase();
+  const isGemma4 = lower.includes("gemma-4") || lower.includes("gemma4");
+  const supportsTools =
+    isGemma4 || lower.includes("qwen3") || lower.includes("qwen-3");
+  const icon = lower.includes("qwen") ? "qwen.png" : "gemini.png";
+
+  return {
+    title: model.name,
+    description: model.description || `Local MLX model: ${model.name}`,
+    params: {
+      title: model.name,
+      model: id,
+      ...(isGemma4 ? { contextLength: 262_144 } : {}),
+      completionOptions: {
+        maxTokens: model.maxTokens ?? 1024,
+      },
+      ...(supportsTools ? { capabilities: { tools: true } } : {}),
+    },
+    isOpenSource: true,
+    tags: [ModelProviderTags.Local, ModelProviderTags.OpenSource],
+    providerOptions: ["mlx"],
+    icon: model.icon ?? icon,
+  };
+}
+
 async function fetchModels(
   ideMessenger: IIdeMessenger,
   provider: string,
@@ -129,6 +156,38 @@ export async function initializeDynamicModels(ideMessenger: IIdeMessenger) {
     } catch (error) {
       console.error("Failed to initialize Ollama models:", error);
       providers.ollama.packages = [...providers.ollama.popularPackages];
+    }
+  }
+
+  if (providers.mlx) {
+    providers.mlx.popularPackages = [
+      {
+        ...models.AUTODETECT,
+        params: { ...models.AUTODETECT.params, title: "MLX" },
+      },
+      models.mlxGemma412b,
+      models.mlxQwen3CoderNext4bit,
+    ];
+
+    try {
+      const fetched = await fetchModels(
+        ideMessenger,
+        "mlx",
+        undefined,
+        providers.mlx.params?.apiBase,
+      );
+      const fetchedPkgs = fetched.map(toMlxPackage);
+      const popularTitles = new Set(
+        providers.mlx.popularPackages.map((p) => p.title),
+      );
+      const additional = fetchedPkgs.filter((p) => !popularTitles.has(p.title));
+      providers.mlx.packages = [
+        ...providers.mlx.popularPackages,
+        ...additional,
+      ];
+    } catch (error) {
+      console.error("Failed to initialize MLX models:", error);
+      providers.mlx.packages = [...providers.mlx.popularPackages];
     }
   }
 

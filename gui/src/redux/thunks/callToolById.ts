@@ -4,6 +4,7 @@ import { CLIENT_TOOLS_IMPLS } from "core/tools/builtIn";
 import { QivrynError, QivrynErrorReason } from "core/util/errors";
 
 import { callClientTool } from "../../util/clientTools/callClientTool";
+import { withAsyncTimeout } from "../../util/asyncTimeout";
 import { selectSelectedChatModel } from "../slices/configSlice";
 import {
   acceptToolCall,
@@ -21,6 +22,8 @@ import {
 import { ThunkApiType } from "../store";
 import { findToolCallById, logToolUsage } from "../util";
 import { streamResponseAfterToolCall } from "./streamResponseAfterToolCall";
+
+const TOOL_CALL_TIMEOUT_MS = 10 * 60 * 1000;
 
 export const callToolById = createAsyncThunk<
   void,
@@ -89,43 +92,71 @@ export const callToolById = createAsyncThunk<
   // Are caught and passed in output as context items
   // Errors that occur outside specifically calling the tool
   // Should not be caught here - should be handled as normal stream errors
-  if (
-    CLIENT_TOOLS_IMPLS.find(
-      (toolName) => toolName === toolCallState.toolCall.function.name,
-    )
-  ) {
-    // Tool is called on client side
-    const {
-      output: clientToolOutput,
-      respondImmediately,
-      error: clientToolError,
-    } = await callClientTool(toolCallState, {
-      dispatch: scopedDispatch,
-      ideMessenger: extra.ideMessenger,
-      getState: getScopedState,
-      sessionId,
-    });
-    output = clientToolOutput;
-    error = clientToolError;
-    streamResponse = respondImmediately;
-  } else {
-    // Tool is called on core side
-    const result = await extra.ideMessenger.request("tools/call", {
-      toolCall: toolCallState.toolCall,
-    });
-    if (result.status === "error") {
-      throw new Error(result.error);
+  try {
+    if (
+      CLIENT_TOOLS_IMPLS.find(
+        (toolName) => toolName === toolCallState.toolCall.function.name,
+      )
+    ) {
+      // Tool is called on client side
+      const {
+        output: clientToolOutput,
+        respondImmediately,
+        error: clientToolError,
+      } = await withAsyncTimeout(
+        callClientTool(toolCallState, {
+          dispatch: scopedDispatch,
+          ideMessenger: extra.ideMessenger,
+          getState: getScopedState,
+          sessionId,
+        }),
+        TOOL_CALL_TIMEOUT_MS,
+        `${toolCallState.toolCall.function.name} tool call`,
+      );
+      output = clientToolOutput;
+      error = clientToolError;
+      streamResponse = respondImmediately;
     } else {
-      output = result.content.contextItems;
-      mcpUiState = result.content.mcpUiState;
-      error = result.content.errorMessage
-        ? new QivrynError(
-            result.content.errorReason || QivrynErrorReason.Unspecified,
-            result.content.errorMessage,
-          )
-        : undefined;
+      // Tool is called on core side
+      const result = await withAsyncTimeout(
+        extra.ideMessenger.request("tools/call", {
+          toolCall: toolCallState.toolCall,
+        }),
+        TOOL_CALL_TIMEOUT_MS,
+        `${toolCallState.toolCall.function.name} tool call`,
+      );
+      if (result.status === "error") {
+        throw new Error(result.error);
+      } else {
+        output = result.content.contextItems;
+        mcpUiState = result.content.mcpUiState;
+        error = result.content.errorMessage
+          ? new QivrynError(
+              result.content.errorReason || QivrynErrorReason.Unspecified,
+              result.content.errorMessage,
+            )
+          : undefined;
+      }
+      streamResponse = true;
     }
-    streamResponse = true;
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    scopedDispatch(
+      errorToolCall({
+        toolCallId,
+        output: [
+          {
+            icon: "problems",
+            name: "Tool Call Error",
+            description: "Tool Call Failed",
+            content: `${toolCallState.toolCall.function.name} failed with the message: ${message}\n\nPlease try a smaller request or run the tool again.`,
+            hidden: false,
+          },
+        ],
+      }),
+    );
+    scopedDispatch(setInactive());
+    return;
   }
 
   const toolWasCanceled =

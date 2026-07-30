@@ -1,11 +1,11 @@
 import { markdownToRule } from "@qivryn/config-yaml";
-import path from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IDE } from "../..";
 import { walkDirs } from "../../indexing/walkDir";
 import {
-  getGlobalCrossAgentRulePaths,
-  isCrossAgentRuleFile,
+  isCodebaseRulesFile,
+  isRootOrDotQivrynRuleFile,
+  isQivrynInternalAgentWorktreePath,
   loadCodebaseRules,
 } from "./loadCodebaseRules";
 
@@ -20,48 +20,54 @@ vi.mock("@qivryn/config-yaml", () => ({
 }));
 
 describe("loadCodebaseRules", () => {
-  it("includes global Cursor and cross-agent rule roots", () => {
-    const home = path.parse(process.cwd()).root + "home/test-user";
-    expect(getGlobalCrossAgentRulePaths(home)).toEqual([
-      path.join(home, ".cursorrules"),
-      path.join(home, ".cursor", "rules"),
-      path.join(home, ".claude", "rules"),
-      path.join(home, ".codex", "rules"),
-      path.join(home, ".codex", "AGENTS.md"),
-      path.join(home, ".agents", "rules"),
-      path.join(home, ".config", "github-copilot", "intellij"),
-    ]);
+  it("recognizes only colocated rules.md files", () => {
+    expect(isCodebaseRulesFile("file:///repo/src/rules.md")).toBe(true);
+    expect(isCodebaseRulesFile("file:///repo/.qivryn/rules.md")).toBe(true);
+    expect(isCodebaseRulesFile("file:///repo/AGENTS.md")).toBe(false);
+    expect(isCodebaseRulesFile("file:///repo/docs/AGENTS.md")).toBe(false);
+    expect(isCodebaseRulesFile("file:///repo/.cursor/rules/react.mdc")).toBe(
+      false,
+    );
+    expect(isCodebaseRulesFile("file:///repo/README.md")).toBe(false);
   });
-  it("recognizes portable Cursor, Claude, Codex, Copilot and Qivryn rules", () => {
-    expect(isCrossAgentRuleFile("file:///repo/.cursorrules")).toBe(true);
-    expect(isCrossAgentRuleFile("file:///repo/.cursor/rules/react.mdc")).toBe(
-      true,
-    );
-    expect(isCrossAgentRuleFile("file:///repo/.codex/rules/review.md")).toBe(
-      true,
-    );
-    expect(isCrossAgentRuleFile("file:///repo/.claude/rules/testing.md")).toBe(
-      true,
-    );
-    expect(isCrossAgentRuleFile("file:///repo/.agents/rules/style.md")).toBe(
-      true,
-    );
+
+  it("allows rule files only at workspace root or under .qivryn", () => {
+    const workspaceDirs = ["file:///repo"];
+
     expect(
-      isCrossAgentRuleFile("file:///repo/.github/instructions/security.md"),
+      isRootOrDotQivrynRuleFile("file:///repo/rules.md", workspaceDirs),
     ).toBe(true);
     expect(
-      isCrossAgentRuleFile("file:///repo/.github/copilot-instructions.md"),
+      isRootOrDotQivrynRuleFile("file:///repo/.qivryn/rules.md", workspaceDirs),
     ).toBe(true);
     expect(
-      isCrossAgentRuleFile(
-        "file:///home/user/.config/github-copilot/intellij/global-copilot-instructions.md",
+      isRootOrDotQivrynRuleFile(
+        "file:///repo/.qivryn/rules/security/rules.md",
+        workspaceDirs,
       ),
     ).toBe(true);
-    expect(isCrossAgentRuleFile("file:///repo/AGENTS.md")).toBe(true);
-    expect(isCrossAgentRuleFile("file:///repo/CLAUDE.md")).toBe(true);
-    expect(isCrossAgentRuleFile("file:///repo/CODEX.md")).toBe(true);
-    expect(isCrossAgentRuleFile("file:///repo/src/rules.md")).toBe(true);
-    expect(isCrossAgentRuleFile("file:///repo/README.md")).toBe(false);
+    expect(
+      isRootOrDotQivrynRuleFile("file:///repo/src/rules.md", workspaceDirs),
+    ).toBe(false);
+    expect(
+      isRootOrDotQivrynRuleFile("file:///repo/docs/rules.md", workspaceDirs),
+    ).toBe(false);
+    expect(
+      isRootOrDotQivrynRuleFile("file:///other/rules.md", workspaceDirs),
+    ).toBe(false);
+  });
+
+  it("excludes copied rules in Qivryn internal agent worktrees", () => {
+    expect(
+      isQivrynInternalAgentWorktreePath(
+        "file:///Users/example/.qivryn/agents/worktrees/a1/extensions/cli/AGENTS.md",
+      ),
+    ).toBe(true);
+    expect(
+      isQivrynInternalAgentWorktreePath(
+        "file:///workspace/extensions/cli/AGENTS.md",
+      ),
+    ).toBe(false);
   });
   // Mock IDE with properly typed mock functions
   const mockIde = {
@@ -76,6 +82,7 @@ describe("loadCodebaseRules", () => {
 
   // Mock rule content
   const mockRuleContent: Record<string, string> = {
+    "file:///workspace/rules.md": "# Root Rules\nFollow root standards",
     "file:///workspace/src/rules.md":
       "# General Rules\nFollow coding standards",
     "file:///workspace/src/redux/rules.md":
@@ -88,6 +95,12 @@ describe("loadCodebaseRules", () => {
 
   // Mock converted rules
   const mockConvertedRules: Record<string, any> = {
+    "file:///workspace/rules.md": {
+      name: "Root Rules",
+      rule: "Follow root standards",
+      source: "colocated-markdown",
+      sourceFile: "file:///workspace/rules.md",
+    },
     "file:///workspace/src/rules.md": {
       name: "General Rules",
       rule: "Follow coding standards",
@@ -145,40 +158,30 @@ describe("loadCodebaseRules", () => {
   afterEach(() => {
     vi.resetAllMocks();
   });
-  it("should load rules from all rules.md files in the workspace", async () => {
+  it("should load only root and .qivryn rules.md files", async () => {
     const { rules, errors } = await loadCodebaseRules(mockIde);
 
-    // Should find all rules.md files
     expect(walkDirs).toHaveBeenCalledWith(mockIde);
 
-    // Should read all rules.md files
-    expect(mockIde.readFile).toHaveBeenCalledTimes(4);
-    expect(mockIde.readFile).toHaveBeenCalledWith(
-      "file:///workspace/src/rules.md",
-    );
-    expect(mockIde.readFile).toHaveBeenCalledWith(
-      "file:///workspace/src/redux/rules.md",
-    );
-    expect(mockIde.readFile).toHaveBeenCalledWith(
-      "file:///workspace/src/components/rules.md",
-    );
+    expect(mockIde.readFile).toHaveBeenCalledTimes(2);
+    expect(mockIde.readFile).toHaveBeenCalledWith("file:///workspace/rules.md");
     expect(mockIde.readFile).toHaveBeenCalledWith(
       "file:///workspace/.qivryn/rules.md",
     );
-
-    // Should convert all rules
-    expect(markdownToRule).toHaveBeenCalledTimes(4);
-
-    // Should return all rules
-    expect(rules).toHaveLength(4);
-    expect(rules).toContainEqual(
-      mockConvertedRules["file:///workspace/src/rules.md"],
+    expect(mockIde.readFile).not.toHaveBeenCalledWith(
+      "file:///workspace/src/rules.md",
     );
-    expect(rules).toContainEqual(
-      mockConvertedRules["file:///workspace/src/redux/rules.md"],
+    expect(mockIde.readFile).not.toHaveBeenCalledWith(
+      "file:///workspace/src/redux/rules.md",
     );
+    expect(mockIde.readFile).not.toHaveBeenCalledWith(
+      "file:///workspace/src/components/rules.md",
+    );
+
+    expect(markdownToRule).toHaveBeenCalledTimes(2);
+
     expect(rules).toContainEqual(
-      mockConvertedRules["file:///workspace/src/components/rules.md"],
+      mockConvertedRules["file:///workspace/rules.md"],
     );
     expect(rules).toContainEqual(
       mockConvertedRules["file:///workspace/.qivryn/rules.md"],
@@ -191,7 +194,7 @@ describe("loadCodebaseRules", () => {
   it("should handle errors when reading a rule file", async () => {
     // Setup mock to throw for a specific file
     (mockIde.readFile as any).mockImplementation((path: string) => {
-      if (path === "file:///workspace/src/redux/rules.md") {
+      if (path === "file:///workspace/.qivryn/rules.md") {
         return Promise.reject(new Error("Failed to read file"));
       }
       return Promise.resolve(mockRuleContent[path] || "");
@@ -200,22 +203,51 @@ describe("loadCodebaseRules", () => {
     const { rules, errors } = await loadCodebaseRules(mockIde);
 
     // Should still return other rules
-    expect(rules).toHaveLength(3);
+    expect(rules).toHaveLength(1);
     expect(rules).toContainEqual(
-      mockConvertedRules["file:///workspace/src/rules.md"],
-    );
-    expect(rules).toContainEqual(
-      mockConvertedRules["file:///workspace/src/components/rules.md"],
-    );
-    expect(rules).toContainEqual(
-      mockConvertedRules["file:///workspace/.qivryn/rules.md"],
+      mockConvertedRules["file:///workspace/rules.md"],
     );
 
     // Should have one error
     expect(errors).toHaveLength(1);
     expect(errors[0].message).toContain(
-      "Failed to parse colocated rule file file:///workspace/src/redux/rules.md: Failed to read file",
+      "Failed to parse colocated rule file file:///workspace/.qivryn/rules.md: Failed to read file",
     );
+  });
+
+  it("does not load rules copied into Qivryn internal agent worktrees", async () => {
+    const copiedRule =
+      "file:///Users/example/.qivryn/agents/worktrees/a1/extensions/cli/AGENTS.md";
+    (walkDirs as any).mockResolvedValue([
+      "file:///workspace/rules.md",
+      copiedRule,
+    ]);
+
+    const { rules } = await loadCodebaseRules(mockIde);
+
+    expect(rules).toHaveLength(1);
+    expect(mockIde.readFile).not.toHaveBeenCalledWith(copiedRule);
+  });
+
+  it("does not read agent files from the broad codebase walk", async () => {
+    const rootAgents = "file:///workspace/AGENTS.md";
+    const nestedAgents = "file:///workspace/docs/AGENTS.md";
+    (walkDirs as any).mockResolvedValue([
+      "file:///workspace/rules.md",
+      "file:///workspace/src/rules.md",
+      rootAgents,
+      nestedAgents,
+    ]);
+
+    const { rules } = await loadCodebaseRules(mockIde);
+
+    expect(rules).toHaveLength(1);
+    expect(mockIde.readFile).toHaveBeenCalledWith("file:///workspace/rules.md");
+    expect(mockIde.readFile).not.toHaveBeenCalledWith(
+      "file:///workspace/src/rules.md",
+    );
+    expect(mockIde.readFile).not.toHaveBeenCalledWith(rootAgents);
+    expect(mockIde.readFile).not.toHaveBeenCalledWith(nestedAgents);
   });
 
   it("should handle errors when walkDirs fails", async () => {

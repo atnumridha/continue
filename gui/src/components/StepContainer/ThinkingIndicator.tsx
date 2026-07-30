@@ -24,6 +24,9 @@ const ThinkingIndicator = ({ historyItem }: ThinkingIndicatorProps) => {
 
   const selectedModel = useAppSelector(selectSelectedChatModel);
   const isStreaming = useAppSelector((state) => state.session.isStreaming);
+  const streamingStatus = useAppSelector(
+    (state) => state.session.streamingStatus,
+  );
 
   const hasContent = Array.isArray(historyItem.message.content)
     ? !!historyItem.message.content.length
@@ -35,11 +38,13 @@ const ThinkingIndicator = ({ historyItem }: ThinkingIndicatorProps) => {
     return null;
   }
 
-  const label = isO1 ? "Thinking" : "Working";
+  const label = streamingStatus ?? (isO1 ? "Thinking" : "Working");
 
   return (
     <div className="qivryn-thinking-indicator px-2 py-2" role="status">
-      <span className="text-lightgray">{`${label}${".".repeat(animation + 1)}`}</span>
+      <span className="text-lightgray">
+        {streamingStatus ? label : `${label}${".".repeat(animation + 1)}`}
+      </span>
     </div>
   );
 };

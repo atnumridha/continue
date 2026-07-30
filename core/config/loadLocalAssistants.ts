@@ -51,6 +51,7 @@ async function getDefinitionFilesInDir(
   ide: IDE,
   dir: string,
   fileExtType?: "yaml" | "markdown",
+  excludeInternalWorktrees = false,
 ): Promise<{ path: string; content: string }[]> {
   try {
     const exists = await ide.fileExists(dir);
@@ -66,6 +67,11 @@ async function getDefinitionFilesInDir(
         ),
       )
       .add(DEFAULT_IGNORE_DIRS);
+    // Qivryn creates temporary agent clones here. They are implementation
+    // state, not user-defined profiles, and can contain thousands of files.
+    if (excludeInternalWorktrees) {
+      overrideDefaultIgnores.add("worktrees/");
+    }
 
     const uris = await walkDir(dir, ide, {
       overrideDefaultIgnores,
@@ -142,7 +148,12 @@ export async function getAllDotQivrynDefinitionFiles(
   const definitionFiles = (
     await Promise.all(
       fullDirs.map((dir) =>
-        getDefinitionFilesInDir(ide, dir, options.fileExtType),
+        getDefinitionFilesInDir(
+          ide,
+          dir,
+          options.fileExtType,
+          subDirName === "agents",
+        ),
       ),
     )
   ).flat();

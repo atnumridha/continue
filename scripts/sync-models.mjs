@@ -2,7 +2,7 @@
 /**
  * sync-models.mjs
  *
- * Fetches live models from both backends and writes ~/.qivryn/config.yaml.
+ * Fetches live models from configured backends and writes ~/.qivryn/config.yaml.
  *
  * For models that support reasoning levels, ONE ENTRY PER REASONING LEVEL is
  * generated so the user can switch reasoning directly from Qivryn's model
@@ -29,6 +29,16 @@ const MODELS_CACHE_FILE = path.join(CODEX_DIR, "models_cache.json");
 const CONFIG_SRC = path.join(__dirname, "..", ".qivryn-config", "config.yaml");
 const CONFIG_DST = path.join(QIVRYN_DIR, "config.yaml");
 const GLOBAL_CTX_FILE = path.join(QIVRYN_DIR, "index", "globalContext.json");
+const MLX_DISCOVERY_API_BASE =
+  process.env.QIVRYN_MLX_DISCOVERY_API_BASE?.trim() ||
+  process.env.MLX_API_BASE?.trim() ||
+  "";
+const MLX_DEFAULT_MODEL = "mlx-community/gemma-4-12B-it-4bit";
+const MLX_BUILT_IN_MODELS = [
+  MLX_DEFAULT_MODEL,
+  "mlx-community/Qwen3-Coder-Next-4bit",
+];
+const MLX_CONTEXT_LENGTH = 262_144;
 
 const LEGACY_DEFAULT_RULES = new Set([
   "You are a precise software engineering assistant. Think carefully before making changes.",
@@ -79,6 +89,20 @@ function writePrivate(file, data) {
 }
 function log(msg) {
   process.stderr.write(`  ${msg}\n`);
+}
+
+export function isGemma4Model(model) {
+  return /(^|[/_-])gemma[-_]?4([/_-]|$)/i.test(model || "");
+}
+
+export function shouldDisableThinkingTemplate(model) {
+  return (
+    isGemma4Model(model) || /(^|[/_-])qwen[-_]?3([/_-]|$)/i.test(model || "")
+  );
+}
+
+export function supportsNativeMlxTools(model) {
+  return shouldDisableThinkingTemplate(model);
 }
 
 // ── Copilot bearer token refresh ──────────────────────────────────────────────
@@ -224,6 +248,33 @@ async function fetchCodexModels() {
   }
 }
 
+// ── Fetch local MLX models ───────────────────────────────────────────────────
+async function fetchMlxModels() {
+  if (!MLX_DISCOVERY_API_BASE) {
+    return [];
+  }
+
+  try {
+    const discoveryApiBase = MLX_DISCOVERY_API_BASE.endsWith("/")
+      ? MLX_DISCOVERY_API_BASE
+      : `${MLX_DISCOVERY_API_BASE}/`;
+    const res = await fetch(new URL("models", discoveryApiBase), {
+      signal: AbortSignal.timeout(1000),
+    });
+    if (!res.ok) {
+      log(`MLX /models → ${res.status}`);
+      return [];
+    }
+    const data = await res.json();
+    return Array.isArray(data.data)
+      ? data.data.map((m) => m.id || m.model).filter(Boolean)
+      : [];
+  } catch (e) {
+    log(`MLX fetch: ${e.message}`);
+    return [];
+  }
+}
+
 // ── Model entry builders ──────────────────────────────────────────────────────
 
 /** One config.yaml model entry, optionally locked to a specific reasoning level */
@@ -232,15 +283,31 @@ function makeEntry({
   provider,
   model,
   apiBase,
+  contextLength,
   roles,
   capabilities,
+  defaultCompletionOptions,
+  requestOptions,
   reasoningEffort,
 }) {
-  const entry = { name, provider, model, apiBase, roles };
+  const entry = {
+    name,
+    provider,
+    model,
+    apiBase,
+    contextLength,
+    roles,
+    defaultCompletionOptions,
+    requestOptions,
+  };
   if (capabilities?.length) entry.capabilities = capabilities;
   if (reasoningEffort) {
     entry.requestOptions = {
-      extraBodyProperties: { reasoning_effort: reasoningEffort },
+      ...(entry.requestOptions || {}),
+      extraBodyProperties: {
+        ...(entry.requestOptions?.extraBodyProperties || {}),
+        reasoning_effort: reasoningEffort,
+      },
     };
   }
   return entry;
@@ -332,8 +399,49 @@ function codexEntries(m) {
   return [entry];
 }
 
+export function mlxEntries(modelIds) {
+  const models = new Set([...MLX_BUILT_IN_MODELS, ...modelIds]);
+
+  return [...models].map((model) =>
+    makeEntry({
+      name:
+        model === MLX_DEFAULT_MODEL
+          ? "MLX: Gemma 4 12B"
+          : `MLX: ${model.split("/").at(-1) || model}`,
+      provider: "mlx",
+      model,
+      contextLength: isGemma4Model(model) ? MLX_CONTEXT_LENGTH : undefined,
+      roles: ["chat", "edit", "apply", "summarize"],
+      capabilities: supportsNativeMlxTools(model) ? ["tool_use"] : undefined,
+      defaultCompletionOptions: {
+        maxTokens: 1024,
+      },
+      requestOptions: shouldDisableThinkingTemplate(model)
+        ? {
+            extraBodyProperties: {
+              chat_template_kwargs: {
+                enable_thinking: false,
+              },
+            },
+          }
+        : undefined,
+    }),
+  );
+}
+
+function readExistingNonMlxModels() {
+  try {
+    const config = YAML.parse(fs.readFileSync(CONFIG_DST, "utf8"));
+    return Array.isArray(config?.models)
+      ? config.models.filter((m) => m?.provider !== "mlx")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 // ── Build full model list ─────────────────────────────────────────────────────
-async function buildModelList(copilotModels, codexModels) {
+export async function buildModelList(copilotModels, codexModels, mlxModels) {
   const models = [];
 
   // ChatGPT Codex models (newest frontier first)
@@ -381,9 +489,14 @@ async function buildModelList(copilotModels, codexModels) {
     );
   }
 
+  // Local MLX models. Keep the known Gemma 4 entry even when the server is not
+  // running so the model remains selectable after install; live /v1/models adds
+  // any other MLX models the local server reports.
+  models.push(...mlxEntries(mlxModels));
+
   // OCA models (static)
   const ocaBase =
-    "https://code-internal.aiservice.us-chicago-1.oci.oraclecloud.com/20250206/app/litellm/v1/";
+    "https://code-internal.aiservice.us-chicago-1.oci.oraclecloud.com/20250206/app/litellm/";
   models.push(
     makeEntry({
       name: "OCA: gpt-5.3-codex",
@@ -406,6 +519,33 @@ async function buildModelList(copilotModels, codexModels) {
       provider: "oca",
       model: "oca/gpt-4o",
       apiBase: ocaBase,
+      roles: ["chat", "edit", "apply"],
+      capabilities: ["tool_use"],
+    }),
+    makeEntry({
+      name: "OCA: Grok 4.20 Reasoning",
+      provider: "oca",
+      model: "oca/grok4-20-reasoning",
+      apiBase: ocaBase,
+      contextLength: 2_000_000,
+      roles: ["chat", "edit", "apply"],
+      capabilities: ["tool_use"],
+    }),
+    makeEntry({
+      name: "OCA: Grok 4.3",
+      provider: "oca",
+      model: "oca/grok4-3",
+      apiBase: ocaBase,
+      contextLength: 1_000_000,
+      roles: ["chat", "edit", "apply"],
+      capabilities: ["tool_use"],
+    }),
+    makeEntry({
+      name: "OCA: Llama 4",
+      provider: "oca",
+      model: "oca/llama4",
+      apiBase: ocaBase,
+      contextLength: 1_000_000,
       roles: ["chat", "edit", "apply"],
       capabilities: ["tool_use"],
     }),
@@ -480,20 +620,32 @@ function clearStaleSelections() {
 async function main() {
   log("Syncing models from live backends...");
 
-  const [copilotModels, codexModels] = await Promise.all([
+  const [copilotModels, codexModels, mlxModels] = await Promise.all([
     fetchCopilotModels(),
     fetchCodexModels(),
+    fetchMlxModels(),
   ]);
 
   log(`Copilot: ${copilotModels.length} picker models`);
   log(`ChatGPT Codex: ${codexModels.length} models`);
+  log(`MLX: ${mlxModels.length} local models`);
 
+  let models;
   if (copilotModels.length === 0 && codexModels.length === 0) {
-    log("No models fetched — keeping existing config unchanged");
-    process.exit(0);
+    const existingModels = readExistingNonMlxModels();
+    if (existingModels.length > 0) {
+      log(
+        `No remote models fetched — preserving ${existingModels.length} existing non-MLX entries`,
+      );
+      models = [...existingModels, ...mlxEntries(mlxModels)];
+    } else {
+      log("No remote models fetched — generating local/static entries only");
+      models = await buildModelList(copilotModels, codexModels, mlxModels);
+    }
+  } else {
+    models = await buildModelList(copilotModels, codexModels, mlxModels);
   }
 
-  const models = await buildModelList(copilotModels, codexModels);
   log(
     `Expanded to ${models.length} entries (including per-reasoning variants)`,
   );

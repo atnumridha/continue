@@ -34,9 +34,16 @@ vi.mock(
   }),
 );
 
-import { ModelDescription } from "core";
+import { ModelDescription, Tool } from "core";
 import { serializeTool } from "core/tools";
-import { grepSearchTool } from "core/tools/definitions";
+import { BuiltInToolNames } from "core/tools/builtIn";
+import {
+  computerUseTool,
+  editFileTool,
+  grepSearchTool,
+  readFileTool,
+  runTerminalCommandTool,
+} from "core/tools/definitions";
 import { resolveEditorContent } from "../../components/mainInput/TipTapEditor/utils/resolveEditorContent";
 import { newSession } from "../slices/sessionSlice";
 import { RootState } from "../store";
@@ -51,6 +58,29 @@ const mockClaudeModel: ModelDescription = {
   provider: "anthropic",
   underlyingProviderName: "anthropic",
   completionOptions: { reasoningBudgetTokens: 2048 },
+};
+
+const readSkillTestTool: Tool = {
+  type: "function",
+  displayTitle: "Read Skill",
+  wouldLikeTo: "read a skill",
+  isCurrently: "reading a skill",
+  hasAlready: "read a skill",
+  group: "Built-In",
+  readonly: true,
+  function: {
+    name: BuiltInToolNames.ReadSkill,
+    description: "Read an available skill before using it.",
+    parameters: {
+      type: "object",
+      properties: {
+        skillName: {
+          type: "string",
+        },
+      },
+      required: ["skillName"],
+    },
+  },
 };
 
 // Mock editor state (what user types in the input)
@@ -442,6 +472,14 @@ describe("streamResponseThunk", () => {
         payload: undefined,
       },
       {
+        type: "symbols/updateFromContextItems/fulfilled",
+        meta: expect.objectContaining({
+          arg: [],
+          requestStatus: "fulfilled",
+        }),
+        payload: undefined,
+      },
+      {
         type: "session/setIsPruned",
         payload: false,
       },
@@ -456,15 +494,8 @@ describe("streamResponseThunk", () => {
           contextLength: 32_768,
           availableTokens: undefined,
           model: "claude-3-5-sonnet-20241022",
+          tokenBreakdown: undefined,
         },
-      },
-      {
-        type: "symbols/updateFromContextItems/fulfilled",
-        meta: expect.objectContaining({
-          arg: [],
-          requestStatus: "fulfilled",
-        }),
-        payload: undefined,
       },
       {
         type: "session/streamUpdate",
@@ -696,6 +727,258 @@ describe("streamResponseThunk", () => {
     });
   });
 
+  it("sends simple greetings without native tool schemas in agent mode", async () => {
+    const initialState = getRootStateWithClaude();
+    initialState.session.id = "session-hello";
+    initialState.session.history = [];
+    initialState.session.mode = "agent";
+
+    const grepTool = serializeTool(grepSearchTool);
+    const grepName = grepTool.function.name;
+    initialState.config.config.tools = [grepTool];
+    initialState.config.config.rules = [
+      {
+        source: "rules-block",
+        rule: "DO_NOT_SEND_THIS_RULE_FOR_SIMPLE_GREETING",
+      },
+    ];
+    initialState.ui.toolSettings = {
+      [grepName]: "allowedWithoutPermission",
+    };
+
+    mockResolveEditorContent.mockResolvedValue({
+      selectedContextItems: [],
+      selectedCode: [],
+      content: "Hello",
+      legacyCommandWithInput: undefined,
+    });
+
+    const mockStore = createMockStore(initialState);
+    const mockIdeMessenger = mockStore.mockIdeMessenger;
+    mockIdeMessenger.responses["llm/compileChat"] = {
+      compiledChatMessages: [{ role: "user", content: "Hello" }],
+      didPrune: false,
+      contextPercentage: 0.01,
+      inputTokens: 50,
+      contextLength: 32_768,
+      availableTokens: 31_718,
+    };
+    mockIdeMessenger.setChatResponseText(
+      "Hello! What would you like me to work on?",
+    );
+    const requestSpy = vi.spyOn(mockIdeMessenger, "request");
+
+    await mockStore.dispatch(
+      streamResponseThunk({
+        editorState: mockEditorState,
+        modifiers: mockModifiers,
+      }) as any,
+    );
+
+    const compileCall = requestSpy.mock.calls.find(
+      ([messageType]) => messageType === "llm/compileChat",
+    );
+    expect(compileCall).toBeDefined();
+    expect(compileCall?.[1]).toMatchObject({
+      options: {},
+    });
+    const systemMessage = compileCall?.[1].messages.find(
+      (message: ChatMessage) => message.role === "system",
+    );
+    expect(systemMessage?.content).toBe("You are a helpful assistant.");
+    expect(String(systemMessage?.content)).not.toContain(
+      "DO_NOT_SEND_THIS_RULE_FOR_SIMPLE_GREETING",
+    );
+    expect(mockGetBaseSystemMessage).toHaveBeenCalledWith(
+      "lightweight-chat",
+      expect.objectContaining({ title: "Claude 3.5 Sonnet" }),
+      [],
+    );
+  });
+
+  it("sends only discovery tool schemas for broad codebase review prompts", async () => {
+    const initialState = getRootStateWithClaude();
+    initialState.session.id = "session-review-codebase";
+    initialState.session.history = [];
+    initialState.session.mode = "agent";
+
+    initialState.config.config.tools = [
+      readFileTool,
+      grepSearchTool,
+      runTerminalCommandTool,
+      computerUseTool,
+      editFileTool,
+    ].map(serializeTool);
+
+    mockResolveEditorContent.mockResolvedValue({
+      selectedContextItems: [],
+      selectedCode: [],
+      content: "review the codebase",
+      legacyCommandWithInput: undefined,
+    });
+
+    const mockStore = createMockStore(initialState);
+    const mockIdeMessenger = mockStore.mockIdeMessenger;
+    mockIdeMessenger.responses["llm/compileChat"] = {
+      compiledChatMessages: [{ role: "user", content: "review the codebase" }],
+      didPrune: false,
+      contextPercentage: 0.01,
+      inputTokens: 500,
+      contextLength: 32_768,
+      availableTokens: 31_268,
+    };
+    mockIdeMessenger.setChatResponseText("Review complete.");
+    const requestSpy = vi.spyOn(mockIdeMessenger, "request");
+
+    await mockStore.dispatch(
+      streamResponseThunk({
+        editorState: mockEditorState,
+        modifiers: mockModifiers,
+      }) as any,
+    );
+
+    const compileCall = requestSpy.mock.calls.find(
+      ([messageType]) => messageType === "llm/compileChat",
+    );
+    expect(compileCall).toBeDefined();
+    const sentToolNames = compileCall?.[1].options.tools.map(
+      (tool: { function: { name: string } }) => tool.function.name,
+    );
+    expect(sentToolNames).toEqual([
+      BuiltInToolNames.ReadFile,
+      BuiltInToolNames.GrepSearch,
+    ]);
+    expect(sentToolNames).not.toContain(BuiltInToolNames.RunTerminalCommand);
+    expect(sentToolNames).not.toContain(BuiltInToolNames.ComputerUse);
+    expect(sentToolNames).not.toContain(BuiltInToolNames.EditExistingFile);
+  });
+
+  it("sends skill and terminal tool schemas for explicit dollar skill prompts", async () => {
+    const initialState = getRootStateWithClaude();
+    initialState.session.id = "session-mosfs-skill";
+    initialState.session.history = [];
+    initialState.session.mode = "agent";
+
+    initialState.config.config.tools = [
+      readFileTool,
+      grepSearchTool,
+      runTerminalCommandTool,
+      readSkillTestTool,
+      computerUseTool,
+      editFileTool,
+    ].map(serializeTool);
+
+    mockResolveEditorContent.mockResolvedValue({
+      selectedContextItems: [],
+      selectedCode: [],
+      content: "use $mosfs review 4-0003351421 and find the RCA",
+      legacyCommandWithInput: undefined,
+    });
+
+    const mockStore = createMockStore(initialState);
+    const mockIdeMessenger = mockStore.mockIdeMessenger;
+    mockIdeMessenger.responses["llm/compileChat"] = {
+      compiledChatMessages: [
+        {
+          role: "user",
+          content: "use $mosfs review 4-0003351421 and find the RCA",
+        },
+      ],
+      didPrune: false,
+      contextPercentage: 0.01,
+      inputTokens: 500,
+      contextLength: 32_768,
+      availableTokens: 31_268,
+    };
+    mockIdeMessenger.setChatResponseText("MOSFS review complete.");
+    const requestSpy = vi.spyOn(mockIdeMessenger, "request");
+
+    await mockStore.dispatch(
+      streamResponseThunk({
+        editorState: mockEditorState,
+        modifiers: mockModifiers,
+      }) as any,
+    );
+
+    const compileCall = requestSpy.mock.calls.find(
+      ([messageType]) => messageType === "llm/compileChat",
+    );
+    expect(compileCall).toBeDefined();
+    const sentToolNames = compileCall?.[1].options.tools.map(
+      (tool: { function: { name: string } }) => tool.function.name,
+    );
+
+    expect(sentToolNames).toContain(BuiltInToolNames.ReadSkill);
+    expect(sentToolNames).toContain(BuiltInToolNames.RunTerminalCommand);
+    expect(sentToolNames).toContain(BuiltInToolNames.ReadFile);
+    expect(sentToolNames).toContain(BuiltInToolNames.GrepSearch);
+    expect(sentToolNames).not.toContain(BuiltInToolNames.ComputerUse);
+    expect(sentToolNames).not.toContain(BuiltInToolNames.EditExistingFile);
+  });
+
+  it("sends skill and terminal tool schemas for SR attachment follow-ups", async () => {
+    const initialState = getRootStateWithClaude();
+    initialState.session.id = "session-sr-attachments";
+    initialState.session.history = [];
+    initialState.session.mode = "agent";
+
+    initialState.config.config.tools = [
+      readFileTool,
+      grepSearchTool,
+      runTerminalCommandTool,
+      readSkillTestTool,
+      computerUseTool,
+      editFileTool,
+    ].map(serializeTool);
+
+    mockResolveEditorContent.mockResolvedValue({
+      selectedContextItems: [],
+      selectedCode: [],
+      content: "read the attachments provided by customer",
+      legacyCommandWithInput: undefined,
+    });
+
+    const mockStore = createMockStore(initialState);
+    const mockIdeMessenger = mockStore.mockIdeMessenger;
+    mockIdeMessenger.responses["llm/compileChat"] = {
+      compiledChatMessages: [
+        {
+          role: "user",
+          content: "read the attachments provided by customer",
+        },
+      ],
+      didPrune: false,
+      contextPercentage: 0.01,
+      inputTokens: 500,
+      contextLength: 32_768,
+      availableTokens: 31_268,
+    };
+    mockIdeMessenger.setChatResponseText("Attachments reviewed.");
+    const requestSpy = vi.spyOn(mockIdeMessenger, "request");
+
+    await mockStore.dispatch(
+      streamResponseThunk({
+        editorState: mockEditorState,
+        modifiers: mockModifiers,
+      }) as any,
+    );
+
+    const compileCall = requestSpy.mock.calls.find(
+      ([messageType]) => messageType === "llm/compileChat",
+    );
+    expect(compileCall).toBeDefined();
+    const sentToolNames = compileCall?.[1].options.tools.map(
+      (tool: { function: { name: string } }) => tool.function.name,
+    );
+
+    expect(sentToolNames).toContain(BuiltInToolNames.ReadSkill);
+    expect(sentToolNames).toContain(BuiltInToolNames.RunTerminalCommand);
+    expect(sentToolNames).toContain(BuiltInToolNames.ReadFile);
+    expect(sentToolNames).toContain(BuiltInToolNames.GrepSearch);
+    expect(sentToolNames).not.toContain(BuiltInToolNames.ComputerUse);
+    expect(sentToolNames).not.toContain(BuiltInToolNames.EditExistingFile);
+  });
+
   it("should execute streaming flow with tool call execution", async () => {
     // Set up auto-approved tool setting for our test tool
     const stateWithToolSettings = getRootStateWithClaude();
@@ -829,10 +1112,10 @@ describe("streamResponseThunk", () => {
       "session/setAppliedRulesAtIndex",
       "session/setActive",
       "session/setInlineErrorMessage",
+      "symbols/updateFromContextItems/fulfilled",
       "session/setIsPruned",
       "session/setContextPercentage",
       "session/setContextUsage",
-      "symbols/updateFromContextItems/fulfilled",
       "session/streamUpdate",
       "session/addPromptCompletionPair",
       "session/setToolGenerated",
@@ -1267,6 +1550,15 @@ describe("streamResponseThunk", () => {
         payload: undefined,
       },
       {
+        type: "symbols/updateFromContextItems/fulfilled",
+        meta: {
+          arg: [],
+          requestId: expect.any(String),
+          requestStatus: "fulfilled",
+        },
+        payload: undefined,
+      },
+      {
         type: "session/setIsPruned",
         payload: false,
       },
@@ -1281,16 +1573,8 @@ describe("streamResponseThunk", () => {
           contextLength: 32_768,
           availableTokens: undefined,
           model: "claude-3-5-sonnet-20241022",
+          tokenBreakdown: undefined,
         },
-      },
-      {
-        type: "symbols/updateFromContextItems/fulfilled",
-        meta: {
-          arg: [],
-          requestId: expect.any(String),
-          requestStatus: "fulfilled",
-        },
-        payload: undefined,
       },
       // User abort action (dispatched by the test)
       {
